@@ -1,140 +1,267 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
-#include <GyverEncoder.h>
 #include <Adafruit_MCP4725.h>
 #include <Adafruit_ADS1X15.h>
 
-// --- Настройки периферии ---
+// --- НАСТРОЙКИ ПИНОВ (ESP32) ---
+#define ENCODER_CLK 25
+#define ENCODER_DT  26
+#define ENCODER_SW  27
+
+// --- ОБЪЕКТЫ ---
 LiquidCrystal_I2C lcd(0x27, 16, 2);
-Encoder enc(2, 3, 4);      // Пины: CLK, DT, SW
-Adafruit_MCP4725 dacV;     // ЦАП для напряжения (Адрес 0x60)
-Adafruit_MCP4725 dacI;     // ЦАП для тока (Адрес 0x61, перемычка ADDR на VCC)
-Adafruit_ADS1115 ads;      // АЦП для измерения реальных V и I
+Adafruit_MCP4725 dacVoltage;
+Adafruit_MCP4725 dacCurrent;
+Adafruit_ADS1115 ads;
 
-// --- Переменные состояния ---
-float setV = 12.00;        // Установленное напряжение
-float setI = 1.00;         // Установленный лимит тока
-int cursorStep = 0;        // Позиция редактирования: 0-нет, 1-дес.вольт, 2-ед.вольт, 3-0.1В, 4-0.01В
-bool editVoltage = true;   // Флаг выбора строки: true - Напряжение, false - Ток
+// --- РЕЖИМЫ ---
+enum Mode {
+  MODE_IDLE,        // Главный экран
+  MODE_SET_VOLTAGE, // Настройка напряжения
+  MODE_SET_CURRENT  // Настройка тока
+};
 
-// --- Таймеры и мигание ---
-uint32_t blinkTimer = 0;
-bool blinkState = true;    // Состояние видимости символа (горит/не горит)
-const int dPos[] = {3, 4, 6, 7}; // Позиции символов на LCD для "V: 00.00V"
+Mode currentMode = MODE_IDLE;
+int editDigitIndex = 0; // 0=Десятки, 1=Единицы, 2=Десятые, 3=Сотые
 
+// --- ЗНАЧЕНИЯ ---
+float setVoltage = 12.00;
+float setCurrent = 1.00;
+float measVoltage = 0.00;
+float measCurrent = 0.00;
+float measPower = 0.00;
+int temperature = 0;
+
+// --- ЭНКОДЕР ---
+int lastClk = HIGH;
+unsigned long lastButtonPress = 0;
+bool buttonActive = false;
+bool longPressDetected = false;
+const int longPressTime = 800; // Уменьшил до 800мс для более отзывчивого входа в меню тока
+
+// Множители разрядов: 10, 1, 0.1, 0.01
+float digitMultipliers[] = {10.0, 1.0, 0.1, 0.01}; 
 
 void setup() {
+  Serial.begin(115200);
+  
   lcd.init();
   lcd.backlight();
-  enc.setType(TYPE2);      // Тип энкодера (зависит от модели, TYPE1 или TYPE2)
+  
+  pinMode(ENCODER_CLK, INPUT);
+  pinMode(ENCODER_DT, INPUT);
+  pinMode(ENCODER_SW, INPUT_PULLUP);
+  lastClk = digitalRead(ENCODER_CLK);
 
-  // Инициализация ЦАП и АЦП
-  dacV.begin(0x60); 
-  dacI.begin(0x61);
+  // Инициализация I2C устройств
+  // В реальном устройстве раскомментировать проверки
+  dacVoltage.begin(0x60);
+  dacCurrent.begin(0x61);
   ads.begin();
-  ads.setGain(GAIN_ONE);   // Усиление 1x (диапазон до +/- 4.096В)
 
-  renderAll();             // Первичная отрисовка экрана
+  updateDACs();
+  
+  lcd.clear();
 }
 
 void loop() {
-  enc.tick();              // Опрос энкодера
+  readSensors(); 
+  handleEncoder(); 
+  updateDisplay(); 
+  delay(5); 
+}
 
-  // 1. Короткий клик: переключение разряда (10 -> 1 -> 0.1 -> 0.01 -> выход)
-  if (enc.isClick()) {
-    cursorStep++;
-    if (cursorStep > 4) cursorStep = 0;
-    blinkState = true;     // При переключении цифра всегда видна
-    renderAll();
-  }
+// --- ЧТЕНИЕ ДАТЧИКОВ ---
+void readSensors() {
+  // Заглушка: если ADS не подключен, выводим 0
+  // Когда подключите, используйте ads.readADC_SingleEnded(x)
+  // measVoltage = ads.readADC_SingleEnded(0) * multiplier;
+  
+  measVoltage = 0.00; 
+  measCurrent = 0.00;
+  
+  measPower = measVoltage * measCurrent;
+  temperature = 35; // Заглушка
+}
 
-  // 2. Долгое удержание: переключение между настройкой V и I
-  if (enc.isHolded()) {
-    editVoltage = !editVoltage;
-    cursorStep = 0;        // Сброс выбора разряда для безопасности
-    blinkState = true;
-    renderAll();
-  }
+// --- УПРАВЛЕНИЕ ЦАПАМИ ---
+void updateDACs() {
+  // Пример пересчета: 0-30В -> 0-4095
+  uint32_t dacValV = (setVoltage / 30.0) * 4096; 
+  uint32_t dacValI = (setCurrent / 10.0) * 4096;
 
-  // 3. Вращение: изменение значения выбранного разряда
-  if (enc.isTurn() && cursorStep > 0) {
-    float delta = 0;
-    // Определяем вес шага в зависимости от позиции курсора
-    if (cursorStep == 1) delta = 10.0;
-    if (cursorStep == 2) delta = 1.0;
-    if (cursorStep == 3) delta = 0.1;
-    if (cursorStep == 4) delta = 0.01;
+  if (dacValV > 4095) dacValV = 4095;
+  if (dacValI > 4095) dacValI = 4095;
 
-    if (editVoltage) {
-      if (enc.isRight()) setV += delta; else setV -= delta;
-      setV = constrain(setV, 0.0, 30.0); // Ограничение диапазона 0-30В
-      updateDAC_V(); 
-    } else {
-      if (enc.isRight()) setI += delta; else setI -= delta;
-      setI = constrain(setI, 0.0, 10.0); // Ограничение диапазона 0-10А
-      updateDAC_I();
+  dacVoltage.setVoltage(dacValV, false);
+  dacCurrent.setVoltage(dacValI, false);
+}
+
+// --- ЛОГИКА ЭНКОДЕРА ---
+void handleEncoder() {
+  int newClk = digitalRead(ENCODER_CLK);
+  
+  // 1. ВРАЩЕНИЕ
+  if (newClk != lastClk && newClk == LOW) {
+    int dtValue = digitalRead(ENCODER_DT);
+    int direction = (dtValue == HIGH) ? 1 : -1;
+    
+    // Меняем значения только если мы В РЕЖИМЕ НАСТРОЙКИ
+    if (currentMode == MODE_SET_VOLTAGE) {
+      changeValue(setVoltage, direction, digitMultipliers[editDigitIndex], 30.0);
+      updateDACs();
+    } else if (currentMode == MODE_SET_CURRENT) {
+      changeValue(setCurrent, direction, digitMultipliers[editDigitIndex], 10.0);
+      updateDACs();
     }
-    blinkState = true;     // Показываем цифру при изменении (не мигаем в момент вращения)
-    blinkTimer = millis(); // Сброс таймера мигания
-    renderAll();
+    // В режиме IDLE вращение ничего не делает (можно добавить регулировку яркости и т.д.)
   }
+  lastClk = newClk;
 
-  // 4. Логика мигания: только если выбран разряд для правки
-  if (cursorStep > 0 && millis() - blinkTimer >= 400) {
-    blinkTimer = millis();
-    blinkState = !blinkState;
-    updateBlinkOnly();     // Обновляем только один символ (экономим ресурсы)
-  }
-}
-
-// Функция полной отрисовки интерфейса
-void renderAll() {
-  drawRow(0, "V:", setV, editVoltage);
-  drawRow(1, "I:", setI, !editVoltage);
-}
-
-// Отрисовка конкретной строки (V или I)
-void drawRow(int row, const char* label, float val, bool active) {
-  lcd.setCursor(0, row);
-  // Стрелка указывает на активный параметр, который будет редактироваться
-  lcd.print(active ? ">" : " "); 
-  lcd.print(label);
+  // 2. КНОПКА
+  int btnState = digitalRead(ENCODER_SW);
   
-  lcd.setCursor(3, row);
-  if (val < 10.0) lcd.print("0"); // Ведущий ноль для фиксации позиций
-  lcd.print(val, 2);              // Печать числа с 2 знаками после запятой
-  lcd.print(row == 0 ? "V " : "A ");
-}
-
-// Функция "точечного" мигания цифрой
-void updateBlinkOnly() {
-  int x = dPos[cursorStep - 1];   // Координата X
-  int y = editVoltage ? 0 : 1;    // Координата Y (строка 0 или 1)
-  float currentVal = editVoltage ? setV : setI;
-  
-  lcd.setCursor(x, y);
-  if (blinkState) {
-    char buf[6];
-    dtostrf(currentVal, 5, 2, buf);
-    if (currentVal < 10.0) buf[0] = '0';
-    // Магия индексов: в строке "12.34" индекс точки - 2. Пропускаем её.
-    int charIdx = (cursorStep <= 2) ? cursorStep - 1 : cursorStep; 
-    lcd.print(buf[charIdx]);
-  } else {
-    lcd.print(" "); // Рисуем пробел вместо цифры
+  if (btnState == LOW) { // Кнопка НАЖАТА
+    if (!buttonActive) {
+      buttonActive = true;
+      lastButtonPress = millis();
+      longPressDetected = false;
+    }
+    
+    // Проверка удержания (Долгое нажатие)
+    if ((millis() - lastButtonPress > longPressTime) && !longPressDetected) {
+      longPressDetected = true; // Флаг, чтобы событие сработало 1 раз за нажатие
+      handleLongPress();        // Вызываем обработчик долгого нажатия
+    }
+    
+  } else { // Кнопка ОТПУЩЕНА
+    if (buttonActive) {
+      // Если это не было долгим нажатием, значит это короткий клик
+      if (!longPressDetected) {
+        handleShortPress();     // Вызываем обработчик короткого клика
+      }
+      buttonActive = false;
+    }
   }
 }
 
-// Пересчет напряжения в 12-битное значение ЦАП (0-4095)
-void updateDAC_V() {
-  // Формула: (Желаемое V / Макс V) * 4095
-  // Предполагаем, что 30В выхода соответствует 5В (или 4.096В) с ЦАП
-  uint32_t dacValue = (uint32_t)((setV / 30.0) * 4095);
-  dacV.setVoltage(dacValue, false);
+// Изменение значения
+void changeValue(float &val, int dir, float increment, float maxVal) {
+  val += dir * increment;
+  if (val < 0) val = 0;
+  if (val > maxVal) val = maxVal;
 }
 
-// Пересчет ограничения тока в значение ЦАП
-void updateDAC_I() {
-  uint32_t dacValue = (uint32_t)((setI / 10.0) * 4095);
-  dacI.setVoltage(dacValue, false);
+// --- ОБРАБОТЧИК КОРОТКОГО НАЖАТИЯ ---
+void handleShortPress() {
+  switch (currentMode) {
+    case MODE_IDLE:
+      // Клик в простое -> Настройка НАПРЯЖЕНИЯ
+      currentMode = MODE_SET_VOLTAGE;
+      editDigitIndex = 0;
+      lcd.clear();
+      break;
+      
+    case MODE_SET_VOLTAGE:
+      // Клик в настройке -> Следующий разряд
+      editDigitIndex++;
+      if (editDigitIndex > 3) { // Прошли сотые доли
+        currentMode = MODE_IDLE; // Выход
+        lcd.clear();
+      }
+      break;
+      
+    case MODE_SET_CURRENT:
+      // Клик в настройке -> Следующий разряд
+      editDigitIndex++;
+      if (editDigitIndex > 3) { // Прошли сотые доли
+        currentMode = MODE_IDLE; // Выход
+        lcd.clear();
+      }
+      break;
+  }
+}
+
+// --- ОБРАБОТЧИК ДОЛГОГО НАЖАТИЯ ---
+void handleLongPress() {
+  switch (currentMode) {
+    case MODE_IDLE:
+      // Долгое в простое -> Настройка ТОКА
+      currentMode = MODE_SET_CURRENT;
+      editDigitIndex = 0;
+      lcd.clear();
+      break;
+      
+    case MODE_SET_VOLTAGE:
+    case MODE_SET_CURRENT:
+      // Долгое в настройке -> Выход на ГЛАВНЫЙ
+      currentMode = MODE_IDLE;
+      lcd.clear();
+      break;
+  }
+}
+
+// --- ОТРИСОВКА ---
+void updateDisplay() {
+  // Обновляем экран каждые 200мс
+  static unsigned long lastLcdUpdate = 0;
+  if (millis() - lastLcdUpdate < 200) return;
+  lastLcdUpdate = millis();
+
+  // СТРОКА 1 (Всегда одинаковая: измерения)
+  lcd.setCursor(0, 0);
+  lcd.print(formatFloat(measVoltage, 2, 5));
+  lcd.print("V    "); 
+  lcd.setCursor(10, 0); 
+  lcd.print(formatFloat(measCurrent, 2, 5));
+  lcd.print("A");
+
+  // СТРОКА 2 (Зависит от режима)
+  lcd.setCursor(0, 1);
+  
+  if (currentMode == MODE_IDLE) {
+    // Главный экран: Мощность и Температура
+    lcd.print(measPower, 1);
+    lcd.print("W");
+    
+    // Очистка середины и вывод температуры справа
+    int spaces = 16 - String(measPower, 1).length() - 1 - String(temperature).length() - 1; 
+    for(int i=0; i<spaces; i++) lcd.print(" ");
+    
+    lcd.print(temperature);
+    lcd.print("C");
+    lcd.noCursor(); 
+    
+  } else if (currentMode == MODE_SET_VOLTAGE) {
+    // Настройка V
+    lcd.print("Set >V:");
+    lcd.print(formatFloat(setVoltage, 2, 5));
+    drawCursor(7); // Смещение 7 символов ("Set >V:")
+    
+  } else if (currentMode == MODE_SET_CURRENT) {
+    // Настройка I
+    lcd.print("Set >I:");
+    lcd.print(formatFloat(setCurrent, 2, 5));
+    drawCursor(7); // Смещение 7 символов ("Set >I:")
+  }
+}
+
+// Рисуем курсор под редактируемой цифрой
+void drawCursor(int offset) {
+  int cursorRelPos = 0;
+  // 12.34 -> индексы 0, 1, (точка), 3, 4
+  if (editDigitIndex == 0) cursorRelPos = 0; 
+  if (editDigitIndex == 1) cursorRelPos = 1; 
+  if (editDigitIndex == 2) cursorRelPos = 3; 
+  if (editDigitIndex == 3) cursorRelPos = 4; 
+  
+  lcd.setCursor(offset + cursorRelPos, 1);
+  lcd.cursor();
+  lcd.blink(); 
+}
+
+String formatFloat(float val, int dec, int width) {
+  String s = String(val, dec);
+  while (s.length() < width) s = "0" + s;
+  return s;
 }
