@@ -138,5 +138,3 @@ void updateDAC_I() {
   uint32_t dacValue = (uint32_t)((setI / 10.0) * 4095);
   dacI.setVoltage(dacValue, false);
 }
-
-// новое 
