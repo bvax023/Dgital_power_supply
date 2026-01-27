@@ -4,200 +4,249 @@
 #include <Adafruit_MCP4725.h>
 #include <Adafruit_ADS1X15.h>
 
-// ================= НАСТРОЙКИ =================
+// ================= НАСТРОЙКИ ПИНОВ =================
 #define CLK_PIN 2
 #define DT_PIN  3
 #define SW_PIN  4
-#define LCD_ADDR 0x27
+#define LCD_ADDR 0x27 // Адрес дисплея (обычно 0x27 или 0x3F)
 
 // ================= ОБЪЕКТЫ =================
 LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
 Encoder enc(CLK_PIN, DT_PIN, SW_PIN); 
 
+// Объекты железа (пока закомментированы для отладки интерфейса)
 // Adafruit_MCP4725 dacV;
 // Adafruit_MCP4725 dacI;
 // Adafruit_ADS1115 ads;
 
-// ================= ПЕРЕМЕННЫЕ (ТОЛЬКО INT) =================
-// Все значения храним в "сотых долях": 1234 = 12.34
-// Это позволяет избежать float и ошибок округления
+// ================= ПЕРЕМЕННЫЕ (ЦЕЛОЧИСЛЕННАЯ ЛОГИКА) =================
+int setV = 1200; // Уставка Напряжения (12.00 В)
+int setI = 100;  // Уставка Тока (1.00 А)
 
-int setV = 1200; // Уставка V
-int setI = 100;  // Уставка I
+int realV = 0;   // Измеренное напряжение
+int realI = 0;   // Измеренный ток
+long realP = 0;   // Мощность
+int tempC = 35;  // Заглушка температуры
 
-int realV = 0;   // Измерение V (0 = 0.00В)
-int realI = 0;   // Измерение I
-long realP = 0;  // Мощность (W). long, т.к. 3000*1000 = 3 000 000 (не влезает в int)
-int tempC = 35; 
+int cursorStep = 0; // 0 = Главный экран, 1,2,3,4 = Редактирование разряда (1-десятки, 2-единицы, 3-десятые, 4-сотые)
+bool editVoltage = true; // true = Set V, false = Set I
 
-// Логика меню
-int cursorStep = 0; // 0=Главный экран, Set 1..4=десятки, единицы, десятые, сотые.
-bool editVoltage = true; //Установка напряжения или тока
+// --- Таймеры ---
+uint32_t blinkTimer = 0; // Таймер для мигания активным разрядом при установке Set V, Set I
+bool blinkState = true;  // true = текст виден, false = текст скрыт (пробел)
 
-// Таймеры
-uint32_t blinkTimer = 0;
-bool blinkState = true; 
+// --- Константы для интерфейса ---
 
-// Координаты цифр
-const int dPos[] = {7, 8, 10, 11}; 
+// Координаты X для каждой цифры для мигания активным разрядом при установке Set V, Set I
+const uint8_t dPos[] = {7, 8, 10, 11}; // [0]=десятки, [1]=единицы, [2]=десятые, [3]=сотые
+
+// При выборе активного разряда для установки Set V, Set I, при повороте энкодера добавляем значение
+const int addValue[] = {0, 1000, 100, 10, 1}; // [0]=пусто, [1]=10В, [2]=1В, [3]=0.1В, [4]=0.01В
 
 void setup() {
-  Serial.begin(9600);
-  lcd.init();
+  Serial.begin(9600); 
+  lcd.init(); // Инициализация экрана
   lcd.backlight();  
-  enc.setType(TYPE2);
+  enc.setType(TYPE2); // Тип энкодера
 
+  // Инициализация железа (раскомментировать при подключении)
   // dacV.begin(0x60); 
   // dacI.begin(0x61);
   // ads.begin();
   
-  updateDACs();
+  updateHardware(); // Применяем стартовые значения   
   lcd.clear();
-  renderAll(); 
+  renderAll(); // Первая полная отрисовка экрана
 }
 
 void loop() {
+  // 1. Опрос энкодера (должен быть первым и частым)
   enc.tick();
   
-  // ================= УПРАВЛЕНИЕ =================
-  if (enc.isClick()) {
-    if (cursorStep == 0) {
-      editVoltage = true;
-      cursorStep = 1; 
-    } else {
-      cursorStep++;
-      if (cursorStep > 4) cursorStep = 0; 
-    }
-    blinkState = true;
-    renderAll(); 
-  }
+  // 2. Обработка енкодера (клики, повороты)
+  handleControl();
 
-  if (enc.isHolded()) {
-    if (cursorStep == 0) {
-      editVoltage = false;
-      cursorStep = 1; 
-    } else {
-      cursorStep = 0; 
-    }
-    blinkState = true;
-    renderAll();
-  }
+  // 3. Анимация курсора (мигание)
+  digitBlinking();
 
-  if (enc.isTurn() && cursorStep > 0) {
-    int steps[] = {0, 1000, 100, 10, 1}; 
-    int delta = steps[cursorStep];
-
-    if (editVoltage) {
-      if (enc.isRight()) setV += delta; else setV -= delta;
-      setV = constrain(setV, 0, 3000); 
-    } else {
-      if (enc.isRight()) setI += delta; else setI -= delta;
-      setI = constrain(setI, 0, 1000);
-    }
-    updateDACs(); 
-    
-    blinkState = true; 
-    blinkTimer = millis();
-    renderAll(); 
-  }
-
-  if (cursorStep > 0 && millis() - blinkTimer >= 400) {
-    blinkTimer = millis();
-    blinkState = !blinkState;
-    updateBlinkDigit(); 
-  }
-
-  simulateSensors();
+  // 4. Работа с датчиками (чтение / расчет мощности)
+  handleSensors();
 }
 
-// ================= ОТРИСОВКА =================
+// ================= ФУНКЦИИ ЛОГИКИ =================
 
-// Функция печати (принимает 1234 -> печатает "12.34")
+// --- Обработка управления (Энкодер) ---
+void handleControl() {  
+  // Клик (Вход в Set V / Переход по разрядам)
+  if (enc.isClick()) {
+    if (cursorStep == 0) { // если мы на главыном экране вход в Set V    
+      editVoltage = true;
+      cursorStep = 1; 
+    } else { // Мы в режиме установки, листаем разряд      
+      cursorStep++;
+      if (cursorStep > 4) cursorStep = 0; // Круг замкнулся -> Выход
+    }
+    forceDisplayUpdate(); // Сразу обновляем экран
+  }
+
+  // Длинное нажатие (Смена режима V/I или Выход)
+  if (enc.isHolded()) {
+    if (cursorStep == 0) { // если мы на главыном экране вход в Set I       
+      editVoltage = false;
+      cursorStep = 1; 
+    } else { // Если мы в режиме Set V, Set I по длинному нажатию выходим       
+      cursorStep = 0; 
+    }
+    forceDisplayUpdate();
+  }
+
+  // Вращение (Изменение числа)
+  if (enc.isTurn() && cursorStep > 0) {
+    // Берем шаг изменения из глобального массива (1000, 100, 10 или 1)
+    int delta = addValue[cursorStep];
+    if (editVoltage) { // Set V      
+      if (enc.isRight()) setV += delta; else setV -= delta;
+      setV = constrain(setV, 0, 3000); // Лимит 0..30.00В
+    } else { // Set I      
+      if (enc.isRight()) setI += delta; else setI -= delta;
+      setI = constrain(setI, 0, 1000); // Лимит 0..10.00А
+    }    
+    updateHardware();     // Обновляем ЦАПы
+    forceDisplayUpdate(); // Перерисовываем экран
+  }
+}
+
+// --- Управление миганием ---
+void digitBlinking() { // Мигаем только если мы в режиме Set V, Set I (cursorStep > 0)  
+  if (cursorStep > 0 && millis() - blinkTimer >= 400) {
+    blinkTimer = millis();
+    blinkState = !blinkState; // Инверсия (Видно <-> Скрыто)
+    updateBlinkDigit();       // Обновляем цифру на экране
+  }
+}
+
+// --- Принудительное обновление экрана ---
+void forceDisplayUpdate() {
+  blinkState = true;     // делаем мигающий разряд видимым
+  blinkTimer = millis(); // Сбрасываем таймер миганием разряда
+  renderAll();           // Полная перерисовка
+}
+  // --- Работа с датчиками ---
+  void handleSensors() {
+    // Обновляем данные не чаще раза в 100 мс (чтобы не тормозить интерфейс)
+    static uint32_t t = 0;
+    if (millis() - t < 100) return;
+    t = millis();
+
+    // ПОКА ИМИТАЦИЯ: Копируем уставки в измерения
+    realV = setV; 
+    realI = setI;
+    
+    // РАСЧЕТ МОЩНОСТИ: P = U * I
+    // 1200 (12.00В) * 100 (1.00А) = 120000.
+    // В "единицах" это 12 Ватт.
+    // Приводим к long, чтобы не было переполнения int (макс 32767).
+    realP = (long)realV * realI;
+    
+    // Обновляем экран измерений (верхнюю строку) только если мы НЕ в меню.
+    // (чтобы не сбивать мигание курсора лишними перерисовками)
+    if (cursorStep == 0) renderAll();
+  }
+
+  // --- Обновление железа (ЦАП) ---
+  void updateHardware() {
+    // Тут будет код для MCP4725
+    // dacV.setVoltage(map(setV, 0, 3000, 0, 4095), false);
+    // dacI.setVoltage(map(setI, 0, 1000, 0, 4095), false);
+  }
+
+// ================= ФУНКЦИИ ОТРИСОВКИ =================
+
+// --- Быстрая печать числа формата 12.34 ---
 void printFormatted(int val) {
-  if (val < 1000) lcd.print("0"); // Ведущий ноль (05.00)
+  // 1. Ведущий ноль (если число меньше 10.00, например 5.00 -> 05.00)
+  if (val < 1000) lcd.print('0'); 
   
-  // Магия целочисленного деления и остатка:
-  lcd.print(val / 100); // Печатаем целую часть (12)
-  lcd.print(".");
+  // 2. Целая часть
+  int whole = val / 100;
   
-  int frac = val % 100; // Дробная часть (34)
-  if (frac < 10) lcd.print("0"); // Ноль, если дробная часть < 10 (например .05)
+  // 3. Дробная часть
+  // Вместо медленного (val % 100) используем быстрое вычитание
+  int frac = val - (whole * 100); 
+  
+  lcd.print(whole);
+  lcd.print('.');
+  if (frac < 10) lcd.print('0'); // Ноль перед дробью (например .05)
   lcd.print(frac);
 }
 
+// --- Отрисовка всего экрана ---
 void renderAll() {
+  // F("...") хранит строки во Flash-памяти, экономя RAM
+  
   // СТРОКА 1: Измерения
   lcd.setCursor(0, 0);
-  printFormatted(realV); lcd.print("V    "); // Теперь передаем напрямую!
+  printFormatted(realV); lcd.print(F("V    ")); // Пробелы чистят мусор
   lcd.setCursor(10, 0);
-  printFormatted(realI); lcd.print("A");
+  printFormatted(realI); lcd.print(F("A"));
 
-  // СТРОКА 2: Меню / Инфо
+  // СТРОКА 2: Контекст (Меню или Инфо)
   lcd.setCursor(0, 1);
   
   if (cursorStep == 0) {
-    // РЕЖИМ IDLE
-    // Мощность: у нас realP хранится как (V*I).
-    // Если 12.00В * 1.00А = 12 Вт.
-    // В числах: 1200 * 100 = 120000.
-    // Чтобы получить ватты, нужно поделить на 10000.
-    // Но мы хотим 1 знак после запятой (12.0). Значит делим на 1000.
+    // === РЕЖИМ IDLE ===
+    // Показываем Мощность (W) и Температуру (C)
     
-    int wattsX10 = realP / 1000; // 120000 / 1000 = 120
+    // realP хранится как (V*100 * I*100) = Ватты * 10000.
+    // Нам нужно вывести формат "12.0W" (один знак после запятой).
+    // Значит делим на 1000. (120000 / 1000 = 120 -> "12.0")
+    int wattsX10 = realP / 1000;
     
-    lcd.print(wattsX10 / 10); // Целые ватты (12)
-    lcd.print(".");
-    lcd.print(wattsX10 % 10); // Десятые ватта (0)
-    lcd.print("W      ");     // Пробелы для очистки
+    lcd.print(wattsX10 / 10); // Целые (12)
+    lcd.print('.');
+    lcd.print(wattsX10 % 10); // Десятые (0) - тут % нужен
+    lcd.print(F("W      "));   // Чистим место
     
+    // Температура справа
     lcd.setCursor(13, 1);
     lcd.print(tempC);
-    lcd.print("C ");
+    lcd.print(F("C "));
     
   } else {
-    // РЕЖИМ НАСТРОЙКИ
-    if (editVoltage) lcd.print("Set >V:");
-    else             lcd.print("Set >I:");
+    // === РЕЖИМ НАСТРОЙКИ ===
+    if (editVoltage) lcd.print(F("Set >V:"));
+    else             lcd.print(F("Set >I:"));
+    
+    // Печатаем значение уставки
+    if (editVoltage) printFormatted(setV);
+    else             printFormatted(setI);
+    
+    lcd.print(F("    ")); // Чистим хвост строки
+  }
+}
+
+// --- Мигание цифрой ---
+void updateBlinkDigit() {
+  // Если мы не в меню - выходим
+  if (cursorStep == 0) return;
+  
+  if (blinkState) {
+    // === ФАЗА "ПОКАЗАТЬ" ===
+    // Просто перерисовываем число целиком. Это проще, чем вычислять одну цифру.
+    // Курсор ставим на начало числа (позиция 7 для "Set >V:12.34")
+    lcd.setCursor(7, 1);
     
     if (editVoltage) printFormatted(setV);
     else             printFormatted(setI);
     
-    lcd.print("    "); 
-  }
-}
-
-void updateBlinkDigit() {
-  if (cursorStep == 0) return;
-  int x = dPos[cursorStep - 1]; 
-  lcd.setCursor(x, 1);
-  
-  if (blinkState) {
-    int val = editVoltage ? setV : setI;
-    int div[] = {0, 1000, 100, 10, 1}; 
-    lcd.print((val / div[cursorStep]) % 10);
   } else {
-    lcd.print(" "); 
+    // === ФАЗА "СКРЫТЬ" ===
+    // Ставим курсор точно на позицию редактируемого разряда
+    // dPos[] хранит координаты {7, 8, 10, 11}
+    int x = dPos[cursorStep - 1]; 
+    lcd.setCursor(x, 1);
+    
+    // Рисуем пробел вместо цифры
+    lcd.print(' '); 
   }
-}
-
-void simulateSensors() {
-  static uint32_t t = 0;
-  if (millis() - t < 100) return;
-  t = millis();
-
-  // Пока датчиков нет, просто копируем уставки
-  // realV и setV теперь одного типа (int), никаких конвертаций!
-  realV = setV; 
-  realI = setI;
-  
-  // Считаем мощность: (1200 * 100) = 120000
-  // Используем long, чтобы не переполнить int (макс 32767)
-  realP = (long)realV * realI;
-  
-  if (cursorStep == 0) renderAll();
-}
-
-void updateDACs() {
-  // dacV.setVoltage(map(setV, 0, 3000, 0, 4095), false);
-  // dacI.setVoltage(map(setI, 0, 1000, 0, 4095), false);
 }
