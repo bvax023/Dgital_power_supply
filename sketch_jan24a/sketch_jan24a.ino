@@ -81,10 +81,11 @@ void handleControl() {
   if (enc.isClick()) {
     if (cursorStep == 0) { // если мы на главыном экране вход в Set V    
       editVoltage = true;
-      cursorStep = 1; 
-    } else { // Мы в режиме установки, листаем разряд      
+      //cursorStep = 1;
+      cursorStep = 2; // Начинаем установку с единиц
+    } else { // Мы в режиме установки, листаем разряд           
       cursorStep++;
-      if (cursorStep > 4) cursorStep = 0; // Круг замкнулся -> Выход
+      if (cursorStep > 4) cursorStep = 1; // переходим по кругу 
     }
     blinkState = true;     // делаем мигающий разряд видимым
     blinkTimer = millis(); // Сбрасываем таймер миганием разряда    
@@ -95,7 +96,8 @@ void handleControl() {
   if (enc.isHolded()) {
     if (cursorStep == 0) { // если мы на главыном экране вход в Set I       
       editVoltage = false;
-      cursorStep = 1; 
+      //cursorStep = 1;
+      cursorStep = 2; // Начинаем установку с единиц
     } else { // Если мы в режиме Set V, Set I по длинному нажатию выходим       
       cursorStep = 0; 
     }
