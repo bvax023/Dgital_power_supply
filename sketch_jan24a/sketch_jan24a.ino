@@ -25,7 +25,7 @@ int setI = 100;  // Уставка Тока (1.00 А)
 
 int realV = 0;   // Измеренное напряжение
 int realI = 0;   // Измеренный ток
-long realP = 0;   // Мощность
+long realP = 0;  // Мощность
 int tempC = 35;  // Заглушка температуры
 
 int cursorStep = 0; // 0 = Главный экран, 1,2,3,4 = Редактирование разряда (1-десятки, 2-единицы, 3-десятые, 4-сотые)
@@ -117,7 +117,7 @@ void handleControl() {
     blinkTimer = millis(); // Сбрасываем таймер миганием разряда
     renderAll(); // Перерисовываем экран
 
-    updateHardware();     // Обновляем ЦАПы
+    updateHardware();     // Обновляем ЦАПы  
   }
 }
 
@@ -174,10 +174,11 @@ void renderAll() {
   // Вторая строка
   lcd.setCursor(0, 1);
   if (cursorStep == 0) { // главный экран, во второй строке показываем Мощность (W) и Температуру (C)    
-    int wattsX10 = realP / 1000; // Вывод ватт    
-    lcd.print(wattsX10 / 10); // Целые 
-    lcd.print('.');
-    lcd.print(wattsX10 % 10); // Десятые 
+    // int wattsX10 = realP / 1000; // Вывод ватт    
+    // lcd.print(wattsX10 / 10); // Целые 
+    // lcd.print('.');
+    // lcd.print(wattsX10 % 10); // Десятые 
+    printFormatted(realP / 100);
     lcd.print(F("W        "));   // Чистим место
 
     // Температура справа
