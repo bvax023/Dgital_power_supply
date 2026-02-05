@@ -2,7 +2,7 @@
 #include <LiquidCrystal_I2C.h>
 #include <GyverEncoder.h>
 #include <Adafruit_MCP4725.h>
-#include <Adafruit_ADS1X15.h>
+//#include <Adafruit_ADS1X15.h>
 
 // ================= НАСТРОЙКИ ПИНОВ =================
 #define CLK_PIN 2
@@ -15,8 +15,8 @@ LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
 Encoder enc(CLK_PIN, DT_PIN, SW_PIN); 
 
 // Объекты железа (пока закомментированы для отладки интерфейса)
-// Adafruit_MCP4725 dacV;
-// Adafruit_MCP4725 dacI;
+ Adafruit_MCP4725 dacV;
+ Adafruit_MCP4725 dacI;
 // Adafruit_ADS1115 ads;
 
 // ================= ПЕРЕМЕННЫЕ (ЦЕЛОЧИСЛЕННАЯ ЛОГИКА) =================
@@ -50,8 +50,8 @@ void setup() {
   enc.setType(TYPE2); // Тип энкодера
 
   // Инициализация железа (раскомментировать при подключении)
-  // dacV.begin(0x60); 
-  // dacI.begin(0x61);
+   dacV.begin(0x60); 
+   dacI.begin(0x61);
   // ads.begin();
   
   updateHardware(); // Применяем стартовые значения   
@@ -70,7 +70,7 @@ void loop() {
   digitBlinking();
 
   // 4. Работа с датчиками (чтение / расчет мощности)
-  handleSensors();
+  //handleSensors();
 }
 
 // ================= ФУНКЦИИ ЛОГИКИ =================
@@ -110,7 +110,7 @@ void handleControl() {
     int delta = addValue[cursorStep];
     if (editVoltage) { // Set V      
       if (enc.isRight()) setV += delta; else setV -= delta;
-      setV = constrain(setV, 0, 3000); // Лимит 0..30.00В
+      setV = constrain(setV, 0, 2200); // Лимит 0..30.00В
     } else { // Set I      
       if (enc.isRight()) setI += delta; else setI -= delta;
       setI = constrain(setI, 0, 1000); // Лимит 0..10.00А
@@ -226,6 +226,6 @@ void renderAll() {
   // --- Обновление железа (ЦАП) ---
   void updateHardware() {
     // Тут будет код для MCP4725
-    // dacV.setVoltage(map(setV, 0, 3000, 0, 4095), false);
-    // dacI.setVoltage(map(setI, 0, 1000, 0, 4095), false);
+     dacV.setVoltage(map(setV, 0, 2200, 0, 4095), false);
+     dacI.setVoltage(map(setI, 0, 1000, 0, 4095), false);
   }
