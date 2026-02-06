@@ -2,7 +2,7 @@
 #include <LiquidCrystal_I2C.h>
 #include <GyverEncoder.h>
 #include <Adafruit_MCP4725.h>
-//#include <Adafruit_ADS1X15.h>
+#include <Adafruit_ADS1X15.h>
 
 // ================= НАСТРОЙКИ ПИНОВ =================
 #define CLK_PIN 2
@@ -17,15 +17,15 @@ Encoder enc(CLK_PIN, DT_PIN, SW_PIN);
 // Объекты железа (пока закомментированы для отладки интерфейса)
  Adafruit_MCP4725 dacV;
  Adafruit_MCP4725 dacI;
-// Adafruit_ADS1115 ads;
+ Adafruit_ADS1115 ads;
 
 // ================= ПЕРЕМЕННЫЕ (ЦЕЛОЧИСЛЕННАЯ ЛОГИКА) =================
 int setV = 1200; // Уставка Напряжения (12.00 В)
 int setI = 100;  // Уставка Тока (1.00 А)
 
-int realV = 0;   // Измеренное напряжение
-int realI = 0;   // Измеренный ток
-long realP = 0;  // Мощность
+float realV = 0;   // Измеренное напряжение
+float realI = 0;   // Измеренный ток
+float realP = 0;  // Мощность
 int tempC = 35;  // Заглушка температуры
 
 int cursorStep = 0; // 0 = Главный экран, 1,2,3,4 = Редактирование разряда (1-десятки, 2-единицы, 3-десятые, 4-сотые)
@@ -50,9 +50,11 @@ void setup() {
   enc.setType(TYPE2); // Тип энкодера
 
   // Инициализация железа (раскомментировать при подключении)
-   dacV.begin(0x60); 
-   dacI.begin(0x61);
-  // ads.begin();
+  dacV.begin(0x60); 
+  dacI.begin(0x61);
+  ads.begin();
+  ads.setGain(GAIN_SIXTEEN);
+  ads.setDataRate(RATE_ADS1115_8SPS);
   
   updateHardware(); // Применяем стартовые значения   
   lcd.clear();
@@ -70,7 +72,7 @@ void loop() {
   digitBlinking();
 
   // 4. Работа с датчиками (чтение / расчет мощности)
-  //handleSensors();
+  handleSensors();
 }
 
 // ================= ФУНКЦИИ ЛОГИКИ =================
@@ -169,9 +171,9 @@ void printFormatted(int val) {
 // --- Отрисовка всего экрана ---
 void renderAll() {  
   lcd.setCursor(0, 0); // realV
-  printFormatted(realV); lcd.print(F("V")); 
+  lcd.print(realV, 3); lcd.print(F("V")); 
   lcd.setCursor(10, 0); // realI
-  printFormatted(realI); lcd.print(F("A"));
+  lcd.print(realI, 3); lcd.print(F("A"));
 
   // Вторая строка
   lcd.setCursor(0, 1);
@@ -198,34 +200,94 @@ void renderAll() {
     else             printFormatted(setI);
     
     lcd.print(F("    ")); // Чистим хвост строки
+    updateBlinkDigit();
   }
 }
 
-// --- Работа с датчиками ---
   void handleSensors() {
-    // Обновляем данные не чаще раза в 100 мс (чтобы не тормозить интерфейс)
-    static uint32_t t = 0;
-    if (millis() - t < 100) return;
-    t = millis();
+    static uint8_t adcStep = 0;
+    static uint32_t adcTimer = 0;
+    
+    // Время конверсии + запас (8 SPS = 125ms)
+    const uint32_t CONV_TIME = 135; 
 
-    // ПОКА ИМИТАЦИЯ: Копируем уставки в измерения
-    realV = setV; 
-    realI = setI;
-    
-    // РАСЧЕТ МОЩНОСТИ: P = U * I
-    // 1200 (12.00В) * 100 (1.00А) = 120000.
-    // В "единицах" это 12 Ватт.
-    // Приводим к long, чтобы не было переполнения int (макс 32767).
-    realP = (long)realV * realI;
-    
-    // Обновляем экран измерений (верхнюю строку) только если мы НЕ в меню.
-    // (чтобы не сбивать мигание курсора лишними перерисовками)
-    if (cursorStep == 0) renderAll();
+    // Диапазон +/- 256 мВ делим на 32768 шагов
+    const float ADC_STEP_MV = 0.0078125; 
+
+    // 2. Коэффициент делителя напряжения (160к + 1к)
+    const float V_DIVIDER = 0.161;
+
+    // 3. Коэффициент для делителя для тока  
+    const float I_RATIO = 0.312; 
+
+    switch (adcStep) {
+      // --- 1. ЗАМЕР НАПРЯЖЕНИЯ (A0-A1) ---
+      case 0: 
+        ads.startADCReading(ADS1X15_REG_CONFIG_MUX_DIFF_0_1, false);
+        adcTimer = millis();
+        adcStep = 1;
+        break;
+
+      case 1: 
+        if (millis() - adcTimer >= CONV_TIME) {
+          int16_t rawV = ads.getLastConversionResults();
+          
+          // Шаг 1: Считаем напряжение на ножке АЦП (в мВ)
+          float pinMV = rawV * ADC_STEP_MV;
+          
+          // Шаг 2: Умножаем на делитель (получаем реальные мВ на выходе БП)
+          realV = pinMV * V_DIVIDER; // например 12000.0
+          
+          // Шаг 3: Переводим в формат "сотые вольта" для int (12000 / 10 = 1200)
+          //realV = (int)(totalMV / 10.0);    
+          Serial.print("realV: ");
+          Serial.println(realV, 3); // Выведет ток с 4 знаками после запятой     
+          
+          if (realV < 0) realV = 0;
+          adcStep = 2; 
+          renderAll();
+        }
+        break;
+
+      // --- 2. ЗАМЕР ТОКА (A2-A3) ---
+      case 2: 
+        ads.startADCReading(ADS1X15_REG_CONFIG_MUX_DIFF_2_3, false);
+        adcTimer = millis();
+        adcStep = 3;
+        break;
+
+      case 3: 
+        if (millis() - adcTimer >= CONV_TIME) {
+          int16_t rawI = ads.getLastConversionResults();
+          
+          // Шаг 1: Считаем напряжение, которое дошло до АЦП (в мВ)
+          float pinMV = abs(rawI) * ADC_STEP_MV;
+          //pinMV/10.0;
+          // Шаг 2: Переводим мВ в Амперы по вашей пропорции (78мВ = 10А)
+          realI = pinMV/10.0;
+
+          Serial.print("realI: ");
+          Serial.println(realI, 3); // Выведет ток с 4 знаками после запятой 
+
+          
+          
+          // Шаг 3: Переводим в формат "сотые ампера" для int (1.00А -> 100)
+          // Но! У вас 10.00А это 1000. Значит умножаем на 100.
+          //realI = pinMV/10.0;                
+          
+          // Мощность
+          realP = (long)realV * realI;       
+         
+          adcStep = 0; 
+          renderAll();
+        }
+        break;
+    }
   }
 
   // --- Обновление железа (ЦАП) ---
   void updateHardware() {
     // Тут будет код для MCP4725
-     dacV.setVoltage(map(setV, 0, 2200, 0, 4095), false);
+     dacV.setVoltage(map(setV, 0, 2230, 0, 4095), false);
      dacI.setVoltage(map(setI, 0, 1000, 0, 4095), false);
   }
