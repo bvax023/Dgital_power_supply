@@ -175,9 +175,9 @@ void renderAll() {
   lcd.setCursor(10, 0); // realI
   lcd.print(realI, 3); lcd.print(F("A"));
 
-  // Вторая строка
-  lcd.setCursor(0, 1);
-  if (cursorStep == 0) { // главный экран, во второй строке показываем Мощность (W) и Температуру (C)    
+  // Вторая строка  
+  if (cursorStep == 0) { // главный экран, во второй строке показываем Мощность (W) и Температуру (C)   
+    lcd.setCursor(0, 1); 
     // int wattsX10 = realP / 1000; // Вывод ватт    
     // lcd.print(wattsX10 / 10); // Целые 
     // lcd.print('.');
@@ -191,6 +191,7 @@ void renderAll() {
     lcd.print(F("C "));
     
   } else {
+    lcd.setCursor(0, 1); 
     // === РЕЖИМ НАСТРОЙКИ ===
     if (editVoltage) lcd.print(F("Set >V:"));
     else             lcd.print(F("Set >I:"));
@@ -200,7 +201,7 @@ void renderAll() {
     else             printFormatted(setI);
     
     lcd.print(F("    ")); // Чистим хвост строки
-    updateBlinkDigit();
+    //updateBlinkDigit();
   }
 }
 
@@ -240,8 +241,8 @@ void renderAll() {
           
           // Шаг 3: Переводим в формат "сотые вольта" для int (12000 / 10 = 1200)
           //realV = (int)(totalMV / 10.0);    
-          Serial.print("realV: ");
-          Serial.println(realV, 3); // Выведет ток с 4 знаками после запятой     
+          //Serial.print("realV: ");
+          //Serial.println(realV, 3); // Выведет ток с 4 знаками после запятой     
           
           if (realV < 0) realV = 0;
           adcStep = 2; 
@@ -266,8 +267,8 @@ void renderAll() {
           // Шаг 2: Переводим мВ в Амперы по вашей пропорции (78мВ = 10А)
           realI = pinMV/10.0;
 
-          Serial.print("realI: ");
-          Serial.println(realI, 3); // Выведет ток с 4 знаками после запятой 
+          //Serial.print("realI: ");
+          //Serial.println(realI, 3); // Выведет ток с 4 знаками после запятой 
 
           
           
