@@ -122,7 +122,7 @@ void setEncoder() {
     blinkTimer = millis(); 
     
     setDAC();     // Обновляем выходное напряжение на ЦАП
-    interface(1); // Перерисовыываем вторую строку
+    interface(1); // Перерисовываем вторую строку
   }
 }
 
@@ -220,20 +220,19 @@ void digitBlinking() {
 // --- Чтение АЦП (ADS1115) ---
 void readADS() {
   static uint8_t adcStep = 0;
-  static uint32_t adcTimer = 0;
+  static uint32_t adcTimer = 0;  
   
-  // Время конверсии ADS1115 (8 SPS = 125ms) + запас
-  const uint32_t CONV_TIME = 135; 
-  
-  // Диапазон +/- 256 мВ (GAIN_SIXTEEN) делим на 32768 шагов = 0.0078125 мВ/бит
-  const float ADC_STEP_MV = 0.0078125;
-  
-  // Коэффициент делителя напряжения 
-  const float V_DIVIDER = 0.161; 
-  
-  // Калибровочные коэффициенты
-  const float corrV = 0.9975;
-  const float corrI = 1.281;
+  const uint32_t CONV_TIME = 135; // 8 SPS = 125ms + запас  
+
+  const float ADC_STEP_MV = 0.0000078125; // Шаг ацп  
+ 
+  const float V_RES_DIVIDER = 161.0; // Коэффициент делителя напряжения 
+  const float I_RES_DIVIDER = 3.2; // Коэффициент делителя тока
+
+  const float SHUNT_OM = 0.025; // Сопротивление шунта  
+
+  const float corrV = 0.9975; // калибровка напряжения
+  const float corrI = 1.001; // калибровка тока
 
   switch (adcStep) {
     // --- ЗАМЕР НАПРЯЖЕНИЯ (A0-A1) ---
@@ -246,12 +245,12 @@ void readADS() {
     case 1: 
       if (millis() - adcTimer >= CONV_TIME) {
         int16_t rawV = ads.getLastConversionResults();         
-        float pinV = rawV * ADC_STEP_MV; // Напряжение на пине (мВ)
-        readV = pinV * V_DIVIDER * corrV; // Реальное напряжение БП
+        float pinV = rawV * ADC_STEP_MV; // Напряжение
+        readV = pinV * V_RES_DIVIDER * corrV; // делитель + коррекция
         if (readV < 0) readV = 0;        
-        
-        interface(0); // Обновляем датчики на экране
-        if (cursorStep == 0) interface(1); // Если главный - обновляем и Ватты
+          
+        interface(0); // Обновляем экран
+        if (cursorStep == 0) interface(1); // Если главный экран - обновляем и Ватты
         adcStep = 2; 
       }
       break;
@@ -266,16 +265,17 @@ void readADS() {
     case 3: 
       if (millis() - adcTimer >= CONV_TIME) {
         int16_t rawI = ads.getLastConversionResults();
-        if (rawI < 0) rawI = 0;
-        float pinI = abs(rawI) * ADC_STEP_MV; // Напряжение шунта (мВ)
-        readI = (pinI * corrI) / 10.0; // Перевод в Амперы
-        
+        if (rawI < 0) rawI = 0;       
+
+        // 1. Узнаем напряжение на ножке АЦП (в мВ)
+        //float pinI_mV = abs(rawI) * ADC_STEP_MV * I_RES_DIVIDER;
+        float pinI_mV = rawI * ADC_STEP_MV * I_RES_DIVIDER;
+        readI = pinI_mV / 0.025; 
+           
         readP = readV * readI; // Расчет мощности
 
-        //Serial.println(rawI);      
-        
-        interface(0); // Обновляем датчики
-        if (cursorStep == 0) interface(1); // Обновляем Ватты
+        interface(0); // Обновляем экран
+        if (cursorStep == 0) interface(1); // Если главный экран - обновляем и Ватты
         adcStep = 0; // Начинаем заново
       }
       break;
@@ -284,7 +284,7 @@ void readADS() {
 
 // --- Обновление ЦАП (MCP4725) ---
 void setDAC() {
-   // Преобразуем 0..22.30В в 0..4095 (12 бит)
+   // Преобразуем 0..22.00В в 0..4095 (12 бит)
    dacV.setVoltage(map(setV, 0, 2230, 0, 4095), false);
    // Преобразуем 0..10.00А в 0..4095
    dacI.setVoltage(map(setI, 0, 1000, 0, 4095), false);
