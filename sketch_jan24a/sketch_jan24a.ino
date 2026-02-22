@@ -204,9 +204,7 @@ void serviceMenu() {
   bool editMode = false; // Флаг: мы листаем пункты (false) или меняем значение (true)  
   encCounter = 0;        // Сброс буфера энкодера перед работой
 
-
-  
-  while (inMenu) {   
+  while (inMenu) {      
     btn.tick();
     readADS(); // Опрос ацп, рисуем первую строку дисплея     
     
@@ -220,7 +218,7 @@ void serviceMenu() {
     }
 
     // ЛОГИКА
-    if (editMode) {
+    if (editMode) { // Если нажата кнопка енкодера - редактируем параметр
       // --- РЕДАКТИРОВАНИЕ ЗНАЧЕНИЯ ---
       if (steps != 0) {
          switch (menuPage) {
@@ -237,7 +235,7 @@ void serviceMenu() {
       }
       if (btn.isClick()) editMode = false; // Клик - выход из редактирования обратно к навигации
       
-    } else {
+    } else { // Листаем меню енкодером
       // --- НАВИГАЦИЯ ПО МЕНЮ ---
       if (steps != 0) {
          menuPage += steps;
@@ -257,24 +255,12 @@ void serviceMenu() {
       }
     }
 
-    // 3. ОТРИСОВКА МЕНЮ (с таймером, чтобы не мерцало)
-    static uint32_t drawTimer = 0;
-    if (millis() - drawTimer > 150) {
-      drawTimer = millis();
-      
-      // Верхняя строка (Показываем текущие данные с АЦП)
-      lcd.setCursor(0, 0);
-      if (readV < 10.0) lcd.print(' ');
-      lcd.print(readV, 3); lcd.print('V');
-      lcd.setCursor(9, 0);
-      if (readI < 10.0) lcd.print(' ');
-      lcd.print(readI, 3); lcd.print('A');
-      
+    // ОТРИСОВКА МЕНЮ    
       // Нижняя строка (Пункты меню)
       lcd.setCursor(0, 1);
       switch (menuPage) {
-          case 0: lcd.print(F("Limit U Mx")); printVal(conf.limitV/100.0, 2); break;
-          case 1: lcd.print(F("Limit I Mx")); printVal(conf.limitI/100.0, 2); break;
+          case 0: lcd.print(F("U Max")); printVal(conf.limitV/100.0, 2); break;
+          case 1: lcd.print(F("I Max")); printVal(conf.limitI/100.0, 2); break;
           case 2: lcd.print(F("ADC V ")); printVal(conf.corrV, 4); break;
           case 3: lcd.print(F("DAC Low")); printInt(conf.dacOffsetV); break;
           case 4: lcd.print(F("DAC Max")); printInt(conf.dacMaxV); break;
@@ -285,15 +271,25 @@ void serviceMenu() {
       
       // Мигающий курсор '<' в режиме редактирования
       lcd.setCursor(15, 1);
-      if (editMode) {
-         if ((millis() / 300) % 2 == 0) lcd.print('<');
-         else lcd.print(' ');
-      } else {
-         lcd.print(' ');
-      }
-    }
+      if (editMode) lcd.print('<');         
+      else lcd.print(' ');    
   }
 }
+  // ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ МЕНЮ =================
+  // Печать целых чисел со смещением для выравнивания
+  void printInt(int val) {
+    lcd.setCursor(9, 1);
+    if (val >= 0) lcd.print(' ');
+    lcd.print(val);
+    lcd.print("  "); 
+  }
+
+  // Печать float со смещением для выравнивания
+  void printVal(float val, byte prec) {
+    lcd.setCursor(9, 1);
+    lcd.print(val, prec);
+  }
+
 
 // ================= УНИВЕРСАЛЬНЫЙ ИНТЕРФЕЙС =================
 // mode 0 = Измеренное напряжение и ток с помощью ads (Верхняя строка)
@@ -414,8 +410,8 @@ void readADS() {
 void setDAC() {
    // Преобразуем уставки 0..Max в 12-битный формат ЦАП (0..4095)
    // Используем калибровки масштаба (dacMax) и смещения нуля (dacOffset) из EEPROM
-   long valV = map(setV, 0, conf.dacMaxV, 0, 4095) + conf.dacOffsetV;
-   long valI = map(setI, 0, conf.dacMaxI, 0, 4095) + conf.dacOffsetI;
+   int valV = map(setV, 0, conf.dacMaxV, 0, 4095) + conf.dacOffsetV;
+   int valI = map(setI, 0, conf.dacMaxI, 0, 4095) + conf.dacOffsetI;
 
    // Жестко ограничиваем, чтобы не выйти за пределы 12 бит при отрицательных смещениях или переполнении
    dacV.setVoltage(constrain(valV, 0, 4095), false);
@@ -432,17 +428,3 @@ void printFormatted(int val) {
   lcd.print(frac);
 }
 
-// ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ МЕНЮ =================
-// Печать целых чисел со смещением для выравнивания
-void printInt(int val) {
-  lcd.setCursor(9, 1);
-  if (val >= 0) lcd.print(' ');
-  lcd.print(val);
-  lcd.print("  "); 
-}
-
-// Печать float со смещением для выравнивания
-void printVal(float val, byte prec) {
-  lcd.setCursor(9, 1);
-  lcd.print(val, prec);
-}
