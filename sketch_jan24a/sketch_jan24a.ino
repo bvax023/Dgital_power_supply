@@ -4,62 +4,77 @@
 #include <GyverButton.h>
 #include <Adafruit_MCP4725.h>
 #include <Adafruit_ADS1X15.h>
-#include <EEPROM.h> // Библиотека для работы с энергонезависимой памятью
+#include <EEPROM.h>
 
 // ================= НАСТРОЙКИ ПИНОВ =================
 #define CLK_PIN 2
 #define DT_PIN  3
 #define SW_PIN  4
-#define LCD_ADDR 0x27 // Адрес дисплея (обычно 0x27 или 0x3F)
-#define EEPROM_KEY 58 // Ключ для проверки первого запуска и сброса памяти при обновлении структуры
+#define LCD_ADDR 0x27 
+#define EEPROM_KEY 58 
 
 // ================= ОБЪЕКТЫ =================
 LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
-Encoder enc(CLK_PIN, DT_PIN); // Энкодер, только вращение, пины 2 и 3
-GButton btn(SW_PIN, HIGH_PULL, NORM_OPEN); // Кнопка (Нажатие, пин 4)
+Encoder enc(CLK_PIN, DT_PIN); 
+GButton btn(SW_PIN, HIGH_PULL, NORM_OPEN); 
 Adafruit_MCP4725 dacV;
 Adafruit_MCP4725 dacI;
 Adafruit_ADS1115 ads;
 
-// ================= СТРУКТУРА НАСТРОЕК в EEPROM=================
+// ================= СТРУКТУРА НАСТРОЕК в EEPROM =================
 struct Settings {
-  byte key;           // Ячейка для хранения ключа первого запуска
-  float corrV;        // Ацп напряжение
-  float corrI;        // Ацп ток
-  int dacMaxV;        // Корректировка ЦАП напряжения в конце диапазона 
-  int dacOffsetV;     // Смещение нуля ЦАП напряжения (в битах АЦП)
-  int dacMaxI;        // Корректировка ЦАП тока в конце диапазона
-  int dacOffsetI;     // Смещение нуля ЦАП тока
-  int limitV;         // Максимальное напряжение бп
-  int limitI;         // Максимальный ток бп
+  byte key;
+  float corrV;        
+  float corrI;
+  int dacMaxV;        
+  int dacOffsetV;
+  int dacMaxI;
+  int dacOffsetI;     
+  int limitV;
+  int limitI;         
 };
 
-Settings conf; // Создаем объект настроек в оперативной памяти
-bool inMenu = true;    // Флаг нахождения в цикле меню
+Settings conf;
+bool inMenu = false; 
+bool blockButton = false; 
 
 // ================= ПЕРЕМЕННЫЕ =================
-int setV = 1200; // Уставка ЦАП Напряжения (12.00 В)
-int setI = 100;  // Уставка ЦАП Тока (1.00 А)
+int setV = 1200;
+int setI = 100;  
 
-float readV = 0;   // Измеренное напряжение АЦП
-float readI = 0;   // Измеренный ток АЦП
-float readP = 0;   // Мощность (readV * readI)
-int tempC = 35;    // Заглушка температуры
+float readV = 0;
+float readI = 0;   
+float readP = 0;
+// Флаг, который АЦП будет "поднимать", когда прочитал свежее напряжение
+bool newVoltageReady = false;
+int tempC = 35;    
 
-int cursorStep = 0;  // 0 = Главный экран, 1,2,3,4 = Редактирование разряда (1-десятки, 2-единицы, 3-десятые, 4-сотые)
-bool setEdit = true; // true = Set V (Напряжение), false = Set I (Ток)
+int cursorStep = 0;
+bool setEdit = true;
 
-uint32_t blinkTimer = 0; // Таймер для мигания активным разрядом
-bool blinkState = true;  // true = текст виден, false = текст скрыт (пробел)
+uint32_t blinkTimer = 0;
+bool blinkState = true;  
 
-const uint8_t dPos[] = {7, 8, 10, 11};        // Координаты X для каждой цифры при мигании, 0=десятки, 1=единицы, 2=десятые, 3=сотые
-const int addValue[] = {0, 1000, 100, 10, 1}; // Шаг изменения значения при повороте энкодера 10В, 1В, 1В, 0.01В
+const uint8_t dPos[] = {7, 8, 10, 11};
+const int addValue[] = {0, 1000, 100, 10, 1};
 
-volatile int encCounter = 0; // Буфер шагов энкодера (заполняется в прерывании)
+volatile int encCounter = 0;
 
-// ================= ПРЕРЫВАНИЕ (ISR) =================
+// === [АВТОКОРРЕКЦИЯ] ПЕРЕМЕННЫЕ ===
+int autoCorrV = 0;          
+float lastReadV = 0;        
+
+// Переменные для Способа 2 (Детектор заклинивания петли)
+int lastStepDir = 0;      // 0 = стояли, 1 = шагнули вверх, -1 = шагнули вниз
+float vBeforeStep = 0;    // Напряжение до нашего шага
+bool ccBlocked = false;   // Флаг: мы уперлись в ограничение тока
+// ==================================
+
+// ==================================
+
+// ================= ПРЕРЫВАНИЕ =================
 void enc_isr() {
-  enc.tick(); // Опрашиваем состояние пинов CLK/DT энкодера
+  enc.tick();
   if (enc.isTurn()) {
     if (enc.isRight()) encCounter++; 
     else encCounter--;
@@ -68,32 +83,27 @@ void enc_isr() {
 
 void setup() {
   Serial.begin(115200); 
-  lcd.init();       // Инициализация экрана
+  lcd.init();       
   lcd.backlight();  
   Wire.setClock(400000L);   
-  enc.setType(TYPE2); // Тип энкодера (обычно TYPE2 для полушаговых)
-  pinMode(SW_PIN, INPUT_PULLUP);  // Подтяжка для кнопки энкодера
+  enc.setType(TYPE2);
+  pinMode(SW_PIN, INPUT_PULLUP);
 
-  // Настройки библиотеки кнопки GyverButton
-  btn.setDebounce(50);      // Антидребезг (мс)
-  btn.setTimeout(300);      // Таймаут для двойного клика
-  btn.setClickTimeout(600); // Таймаут удержания (через 0.6 сек считается как Long Press)
+  btn.setDebounce(50);      
+  btn.setTimeout(300);
+  btn.setClickTimeout(600); 
 
-  // === НАСТРОЙКА ПРЕРЫВАНИЙ ===
   attachInterrupt(digitalPinToInterrupt(CLK_PIN), enc_isr, CHANGE);
   attachInterrupt(digitalPinToInterrupt(DT_PIN), enc_isr, CHANGE);
 
-  // Инициализация железа
-  dacV.begin(0x60); // ЦАП Напряжения
-  dacI.begin(0x61); // ЦАП Тока
-  ads.begin();      // АЦП ADS1115
-  ads.setGain(GAIN_SIXTEEN);          // Усиление 16x (диапазон +/- 0.256В)
-  ads.setDataRate(RATE_ADS1115_8SPS); // Скорость опроса (8 замеров в сек)
+  dacV.begin(0x60); 
+  dacI.begin(0x61); 
+  ads.begin();
+  ads.setGain(GAIN_SIXTEEN);          
+  ads.setDataRate(RATE_ADS1115_8SPS);
 
-  // === ЗАГРУЗКА НАСТРОЕК ===
   EEPROM.get(0, conf);
   if (conf.key != EEPROM_KEY) {
-    // Дефолтные значения при первом запуске (или если изменен ключ EEPROM_KEY)
     conf.key = EEPROM_KEY;
     conf.corrV = 0.9975;
     conf.corrI = 0.9995;
@@ -103,112 +113,130 @@ void setup() {
     conf.dacOffsetI = 52;
     conf.limitV = 2200;
     conf.limitI = 1000;
+    EEPROM.put(0, conf);
   }
   
-  setDAC();     // Применяем стартовые значения 
+  setDAC();     
   lcd.clear();
-  interface(1); // Отрисовка нижней строки интерфейса
-  interface(0); // Отрисовка верхней строки датчиков
+  interface(1);
+  interface(0); 
 }
 
 void loop() {
-  btn.tick();       // опрос кнопки
-  setEncoder();     // Обработка вращения (Забираем данные из буфера прерываний)
-  EncButton();      // Логика енкодера
-  digitBlinking();  // Мигание цифрой активного разряда при установке тока или напряжения 
-  readADS();    // Опрос АЦП (Измерение напряжения и тока). true = разрешаем обновлять экран
+  btn.tick();
+  
+  // Снятие блокировки кнопки после выхода из меню
+  if (blockButton && !btn.state()) {
+      blockButton = false; 
+      btn.resetStates(); 
+  }
 
-  //Serial.println(cursorStep);
+  setEncoder();     
+  EncButton();      
+  digitBlinking();
+  readADS();    
+
+  // === [АВТОКОРРЕКЦИЯ] ВЫЗОВ ФУНКЦИИ В ЦИКЛЕ ===
+  corrDacV(); 
 }
 
-// ================= ЛОГИКА ВРАЩЕНИЯ (БУФЕРНАЯ) =================
+// ================= ЛОГИКА ВРАЩЕНИЯ =================
 void setEncoder() {
-  if (encCounter == 0) return; // Если буфер пустой - выходим
+  if (encCounter == 0) return;
   int steps = 0;
-
-  // Отключаем прерывания, чтобы безопасно забрать значение и обнулить счетчик.
   noInterrupts();
   steps = encCounter;
   encCounter = 0; 
   interrupts();
-  
-  // Вход в меню, если кнопка ЗАЖАТА (state) И был поворот ВПРАВО (steps > 0)
+
+  // Вход в меню
   if (btn.state() && steps > 0) {
-      serviceMenu();       // Идем в сервисное меню
-      btn.resetStates();   // Сбрасываем флаги кнопки после выхода из меню
-      lcd.clear();         // Чистим экран от остатков меню
-      interface(1);        // Показываем первую строку дисплея
-      return; 
+      serviceMenu();
+      
+      blockButton = true; 
+      btn.resetStates();
+      
+      lcd.clear();
+      interface(1);
+      return;
   }
 
-  // Если мы в режиме настройки напряжения или тока (cursorStep > 0)
   if (cursorStep > 0) {
-    int delta = addValue[cursorStep] * steps; // Умножаем количество шагов на множитель текущего разряда
+    int delta = addValue[cursorStep] * steps;
     
-    if (setEdit) { // Настройка напряжения      
+    if (setEdit) {      
       setV += delta;
-      setV = constrain(setV, 0, conf.limitV); // Ограничиваем заданным в меню лимитом
-    } else {       // Настройка тока
+      setV = constrain(setV, 0, conf.limitV); 
+      
+      // === [АВТОКОРРЕКЦИЯ] СБРОС ПРИ РУЧНОЙ УСТАНОВКЕ ===
+      autoCorrV = 0; 
+      lastStepDir = 0;
+      ccBlocked = false;
+      // ==================================================
+      
+    } else {       
       setI += delta;
-      setI = constrain(setI, 0, conf.limitI); // Ограничиваем заданным в меню лимитом
+      setI = constrain(setI, 0, conf.limitI); 
     }        
     
-    // Сбрасываем таймер мигания, чтобы цифра сразу стала видна при вращении
-    blinkState = true; 
+    blinkState = true;
     blinkTimer = millis(); 
     
-    setDAC();     // Обновляем выходное напряжение на ЦАП
-    interface(1); // Перерисовываем нижнюю строку с новыми уставками
+    setDAC();     
+    interface(1);
   }
 }
 
-// ================= ЛОГИКА КНОПКИ (БИБЛИОТЕКА) =================
+// ================= ЛОГИКА КНОПКИ =================
 void EncButton() {  
-  if (btn.isClick()) { // Короткий клик
+  if (blockButton) return; 
+
+  if (btn.isClick()) { 
     if (cursorStep == 0) {    
-      // Если были на Главном -> Вход в настройку Напряжения
       setEdit = true;
-      cursorStep = 2; // Начинаем с единиц вольт
+      cursorStep = 2; 
     } else {          
-      // Если были в режиме установки -> Переход к следующему разряду
       cursorStep++;
-      if (cursorStep > 4) cursorStep = 1; // Зацикливаем 1->2->3->4->1
+      if (cursorStep > 4) cursorStep = 1; 
     }
-    blinkState = true; 
+    blinkState = true;
     blinkTimer = millis();    
-    interface(1); // Обновляем экран
+    interface(1); 
   }
 
-  if (btn.isHolded()) { // Длинное удержание
+  if (btn.isHolded()) { 
     if (cursorStep == 0) { 
-        // Если были на Главном -> Вход в настройку Тока
         setEdit = false;
-        cursorStep = 2; // Начинаем с единиц ампер
+        cursorStep = 2; 
     } else { 
-        // Если были в режиме установки напряжения или тока -> Выход на Главный экран
         cursorStep = 0;
     }
-    interface(1); // Обновляем экран
+    interface(1); 
   }
 }
 
 // ================= СЕРВИСНОЕ МЕНЮ =================
-// Этот цикл работает изолированно и перехватывает управление до момента выхода
 void serviceMenu() {    
+  inMenu = true;
   lcd.clear();
   lcd.print(F("Service Menu"));
   delay(800);
   lcd.clear();
   
-  int menuPage = 0;      // Текущая страница меню
-  bool editMode = false; // Флаг: мы листаем пункты (false) или меняем значение (true)  
-  encCounter = 0;        // Сброс буфера энкодера перед работой
+  int menuPage = 0;      
+  bool editMode = false;
+  encCounter = 0;
+
+  while (btn.state()) {
+    btn.tick(); delay(10);
+  }
+  btn.tick();
+  btn.resetStates();
 
   while (inMenu) {      
     btn.tick();
-    readADS(); // Опрос ацп, рисуем первую строку дисплея     
+    readADS();     
     
-    // Отключаем прерывания, чтобы безопасно забрать значение и обнулить счетчик.
     int steps = 0;
     if (encCounter != 0) {
       noInterrupts();
@@ -217,9 +245,7 @@ void serviceMenu() {
       interrupts();
     }
 
-    // ЛОГИКА
-    if (editMode) { // Если нажата кнопка енкодера - редактируем параметр
-      // --- РЕДАКТИРОВАНИЕ ЗНАЧЕНИЯ ---
+    if (editMode) {
       if (steps != 0) {
          switch (menuPage) {
             case 0: conf.limitV += steps * 10; break;      
@@ -231,90 +257,84 @@ void serviceMenu() {
             case 6: conf.dacOffsetI += steps; break;       
             case 7: conf.dacMaxI += steps; break;
          }
-         setDAC(); // Сразу применяем к железу, чтобы видеть результат на выходе
+         
+         // === [АВТОКОРРЕКЦИЯ] СБРОСИТЬ ПОПРАВКУ ЕСЛИ МЕНЯЛИ КАЛИБРОВКУ ===
+         autoCorrV = 0;
+         setDAC();
       }
-      if (btn.isClick()) editMode = false; // Клик - выход из редактирования обратно к навигации
+      if (btn.isClick()) editMode = false;
       
-    } else { // Листаем меню енкодером
-      // --- НАВИГАЦИЯ ПО МЕНЮ ---
+    } else {
       if (steps != 0) {
          menuPage += steps;
          if (menuPage < 0) menuPage = 7;
          if (menuPage > 7) menuPage = 0;
-         lcd.clear(); // Чистим экран при смене страницы
+         lcd.clear();
       }
-      if (btn.isClick()) editMode = true; // Клик - проваливаемся в редактирование значения
+      if (btn.isClick()) editMode = true;
       
-      // ВЫХОД И СОХРАНЕНИЕ (Кнопка зажата + Поворот ВЛЕВО)
       if (btn.state() && steps < 0) {
          lcd.clear();
          lcd.print(F("Saving..."));
-         EEPROM.put(0, conf); // Записываем структуру настроек в память
+         EEPROM.put(0, conf); 
          delay(1000);
-         inMenu = false; // Выход из цикла while
+         inMenu = false; 
       }
     }
 
     // ОТРИСОВКА МЕНЮ    
-      // Нижняя строка (Пункты меню)
-      lcd.setCursor(0, 1);
-      switch (menuPage) {
-          case 0: lcd.print(F("U Max")); printVal(conf.limitV/100.0, 2); break;
-          case 1: lcd.print(F("I Max")); printVal(conf.limitI/100.0, 2); break;
-          case 2: lcd.print(F("ADC V ")); printVal(conf.corrV, 4); break;
-          case 3: lcd.print(F("DAC Low")); printInt(conf.dacOffsetV); break;
-          case 4: lcd.print(F("DAC Max")); printInt(conf.dacMaxV); break;
-          case 5: lcd.print(F("ADC I ")); printVal(conf.corrI, 4); break;
-          case 6: lcd.print(F("DAC Low")); printInt(conf.dacOffsetI); break;
-          case 7: lcd.print(F("DAC Max")); printInt(conf.dacMaxI); break;
-      }
+    lcd.setCursor(0, 1);
+    switch (menuPage) {
+        case 0: lcd.print(F("U Max")); printVal(conf.limitV/100.0, 2); break;
+        case 1: lcd.print(F("I Max")); printVal(conf.limitI/100.0, 2); break;
+        case 2: lcd.print(F("ADC V ")); printVal(conf.corrV, 4); break;
+        case 3: lcd.print(F("DAC Low")); printInt(conf.dacOffsetV); break;
+        case 4: lcd.print(F("DAC Max")); printInt(conf.dacMaxV); break;
+        case 5: lcd.print(F("ADC I ")); printVal(conf.corrI, 4); break;
+        case 6: lcd.print(F("DAC Low")); printInt(conf.dacOffsetI); break;
+        case 7: lcd.print(F("DAC Max")); printInt(conf.dacMaxI); break;
+    }
       
-      // Мигающий курсор '<' в режиме редактирования
-      lcd.setCursor(15, 1);
-      if (editMode) lcd.print('<');         
-      else lcd.print(' ');    
+    lcd.setCursor(15, 1);
+    if (editMode) lcd.print('<');         
+    else lcd.print(' ');    
   }
 }
-  // ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ МЕНЮ =================
-  // Печать целых чисел со смещением для выравнивания
-  void printInt(int val) {
-    lcd.setCursor(9, 1);
-    if (val >= 0) lcd.print(' ');
-    lcd.print(val);
-    lcd.print("  "); 
-  }
 
-  // Печать float со смещением для выравнивания
-  void printVal(float val, byte prec) {
-    lcd.setCursor(9, 1);
-    lcd.print(val, prec);
-  }
+// ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
+void printInt(int val) {
+  lcd.setCursor(9, 1);
+  if (val >= 0) lcd.print(' ');
+  lcd.print(val);
+  lcd.print("  ");
+}
 
+void printVal(float val, byte prec) {
+  lcd.setCursor(9, 1);
+  lcd.print(val, prec);
+}
 
-// ================= УНИВЕРСАЛЬНЫЙ ИНТЕРФЕЙС =================
-// mode 0 = Измеренное напряжение и ток с помощью ads (Верхняя строка)
-// mode 1 = Если на главном экране (cursorStep == 0), то ватты и градусы. Если нет - режим установки напряжения или тока
 void interface(byte mode) {
   switch (mode) {   
     case 0: 
       lcd.setCursor(0, 0);
       if (readV < 10.0) lcd.print(' ');
-      lcd.print(readV, 3); lcd.print('V'); // Напряжение (V)
+      lcd.print(readV, 2); lcd.print('V'); 
       lcd.setCursor(9, 0);
       if (readI < 10.0) lcd.print(' ');
-      lcd.print(readI, 3); lcd.print('A'); // Ток (A)
+      lcd.print(readI, 3); lcd.print('A'); 
       break;
 
     case 1: 
       lcd.setCursor(0, 1);
-      if (cursorStep == 0) { // Главный экран        
+      if (cursorStep == 0) {       
         if (readP < 10.0) lcd.print(' ');
         if (readP < 100.0) lcd.print(' ');
         lcd.print(readP, 2); lcd.print('W');
         
         lcd.print("      "); 
         lcd.print(tempC); lcd.print('C');
-      } else { // Режим установки напряжения или тока        
+      } else {        
         if (setEdit) {
            lcd.print(F("Set >V:"));
            printFormatted(setV);
@@ -323,9 +343,8 @@ void interface(byte mode) {
            printFormatted(setI);
         }
         
-        lcd.print(F("    ")); // Чистим хвост строки
+        lcd.print(F("    "));
         
-        // Логика мигания (ставим пробел поверх цифры в активном разряде)
         if (!blinkState) {
            int x = dPos[cursorStep - 1];
            lcd.setCursor(x, 1);    
@@ -336,28 +355,27 @@ void interface(byte mode) {
   }
 }
 
-// --- Управление миганием активного разряда по таймеру ---
 void digitBlinking() {
-  // Мигаем только если мы в режиме настройки (cursorStep > 0)
   if (cursorStep > 0 && millis() - blinkTimer >= 400) {
     blinkTimer = millis();
-    blinkState = !blinkState; // Инверсия
+    blinkState = !blinkState; 
     interface(1); 
   }
 }
 
-// --- Чтение АЦП (ADS1115) с параметром DRAW ---
+// ================= ЧТЕНИЕ АЦП =================
 void readADS() {
   static uint8_t adcStep = 0;
-  static uint32_t adcTimer = 0;  
+  static uint32_t adcTimer = 0;  // Возвращаем локальный таймер для АЦП
   
-  const uint32_t CONV_TIME = 135; // 8 SPS = 125ms + запас
-  const float ADC_STEP_MV = 0.0000078125; // Шаг АЦП при усилении 16x
-  const float V_RES_DIVIDER = 161.0; // Коэффициент аппаратного делителя напряжения 
-  const float I_RES_DIVIDER = 3.2;   // Коэффициент аппаратного делителя тока
+  // 8 SPS = 125ms. Добавляем 10ms запаса на переключение MUX (итого 135ms)
+  const uint32_t CONV_TIME = 135; 
+  
+  const float ADC_STEP_MV = 0.0000078125;
+  const float V_RES_DIVIDER = 161.0;
+  const float I_RES_DIVIDER = 3.2;
 
   switch (adcStep) {
-    // --- ЗАМЕР НАПРЯЖЕНИЯ (A0-A1) ---
     case 0: 
       ads.startADCReading(ADS1X15_REG_CONFIG_MUX_DIFF_0_1, false);
       adcTimer = millis();
@@ -365,21 +383,25 @@ void readADS() {
       break;
 
     case 1: 
+      // Ждем строго отведенное время, чтобы MUX гарантированно переключился
       if (millis() - adcTimer >= CONV_TIME) {
         int16_t rawV = ads.getLastConversionResults();
-        float pinV = rawV * ADC_STEP_MV; // Напряжение на ножке АЦП
+        float pinV = rawV * ADC_STEP_MV; 
         
-        // Восстанавливаем напряжение (делитель) и применяем программную калибровку
         readV = pinV * V_RES_DIVIDER * conf.corrV;
         if (readV < 0) readV = 0;         
         
         interface(0);
-        if (cursorStep == 0 && !inMenu) interface(1); // Если главный экран и не вменю - обновляем и Ватты       
-        adcStep = 2;
+        if (cursorStep == 0 && !inMenu) interface(1);
+        
+        // === СИГНАЛ ДЛЯ АВТОКОРРЕКЦИИ ===
+        newVoltageReady = true; // Поднимаем флаг: есть чистые данные!
+        // ================================
+
+        adcStep = 2; // Идем мерить ток
       }
       break;
 
-    // --- ЗАМЕР ТОКА (A2-A3) ---
     case 2: 
       ads.startADCReading(ADS1X15_REG_CONFIG_MUX_DIFF_2_3, false);
       adcTimer = millis();
@@ -391,40 +413,115 @@ void readADS() {
         int16_t rawI = ads.getLastConversionResults();
         if (rawI < 0) rawI = 0;       
 
-        // 1. Узнаем напряжение на ножке АЦП в Вольтах, домножаем на делитель
         float pinI_mV = rawI * ADC_STEP_MV * I_RES_DIVIDER;
-        // 2. Делим на сопротивление шунта 0.025 Ом и применяем программную калибровку
         readI = (pinI_mV / 0.025) * conf.corrI;
-        
-        readP = readV * readI; // Расчет мощности
+        readP = readV * readI; 
 
         interface(0);
-        if (cursorStep == 0 && !inMenu) interface(1); // Если главный экран и не в меню - обновляем и Ватты        
-        adcStep = 0; // Начинаем цикл опроса заново
+        if (cursorStep == 0 && !inMenu) interface(1);        
+        
+        adcStep = 0; // Начинаем цикл заново 
       }
       break;
   }
 }
 
-// --- Обновление выходов ЦАП (MCP4725) ---
-void setDAC() {
-   // Преобразуем уставки 0..Max в 12-битный формат ЦАП (0..4095)
-   // Используем калибровки масштаба (dacMax) и смещения нуля (dacOffset) из EEPROM
-   int valV = map(setV, 0, conf.dacMaxV, 0, 4095) + conf.dacOffsetV;
-   int valI = map(setI, 0, conf.dacMaxI, 0, 4095) + conf.dacOffsetI;
+// === [АВТОКОРРЕКЦИЯ] АЛГОРИТМ УМНОЙ ПОДСТРОЙКИ (СПОСОБ 2) ===
+void corrDacV() {
+  // 1. Работаем только на главном экране
+ // if (cursorStep != 0 || inMenu) return;
 
-   // Жестко ограничиваем, чтобы не выйти за пределы 12 бит при отрицательных смещениях или переполнении
+  // 2. Ждем сигнала от АЦП (работаем только по свежим данным)
+  if (!newVoltageReady) return; 
+  newVoltageReady = false; 
+
+  float targetV = setV / 100.0;     
+  float errorV = targetV - readV;   
+  float dV = abs(readV - lastReadV);
+  
+  lastReadV = readV; 
+
+  // --- СНЯТИЕ БЛОКИРОВКИ CC ---
+  // Если мы были заблокированы, проверяем: не отключили ли нагрузку?
+  // Если напряжение само восстановилось почти до заданного, снимаем блок.
+  if (ccBlocked) {
+      if (readV >= targetV - 0.005) {
+          ccBlocked = false; 
+      } else {
+          return; // Все еще под нагрузкой, ничего не крутим!
+      }
+  }
+
+  // 3. ПРОВЕРКА НА СТАБИЛЬНОСТЬ
+  // Если мы ничего не меняли (lastStepDir == 0), а напряжение плывет (> 5мВ) - ждем
+  if (dV > 0.005 && lastStepDir == 0) return; 
+
+  // --- СПОСОБ 2: ПРОВЕРКА РЕАКЦИИ ЖЕЛЕЗА НА НАШ ПРОШЛЫЙ ШАГ ---
+  if (lastStepDir == 1) { 
+      // Мы пытались поднять напряжение. Оно должно было вырасти на ~5 мВ.
+      // Если оно выросло меньше чем на 2 мВ (или упало), значит мы в режиме CC!
+      if (readV <= (vBeforeStep + 0.002)) {
+          autoCorrV--;      // Срочно откатываем этот ошибочный шаг ЦАП назад
+          lastStepDir = 0;  // Сбрасываем направление
+          ccBlocked = true; // СТАВИМ БЛОКИРОВКУ (железо нас не слушается)
+          setDAC();         // Применяем откат
+          return;           // Прерываем работу
+      }
+  } else if (lastStepDir == -1) {
+      // Мы пытались опустить напряжение.
+      if (readV >= (vBeforeStep - 0.002)) {
+          autoCorrV++;      // Откат
+          lastStepDir = 0;  
+          setDAC();
+          return;
+      }
+  }
+  // -----------------------------------------------------------
+
+  // 4. ГРУБАЯ ЗАЩИТА ОТ КЗ (Если просело больше чем на 100 мВ - жесткий блок)
+  if (abs(errorV) > 0.100) {
+      lastStepDir = 0;
+      return; 
+  }
+
+  // 5. МАТЕМАТИЧЕСКОЕ ОКРУГЛЕНИЕ (Мертвая зона 3 мВ)
+  if (abs(errorV) <= 0.003) {
+      lastStepDir = 0; // Достигли цели, сбрасываем статус шагов
+      return;
+  }
+
+  // 6. ДЕЛАЕМ НОВЫЙ ШАГ ЦАП
+  vBeforeStep = readV; // Запоминаем напряжение ПЕРЕД шагом
+
+  if (errorV > 0) {
+    autoCorrV++; 
+    lastStepDir = 1; // Говорим алгоритму: "В следующем цикле проверь, выросло ли!"
+  } else {
+    autoCorrV--; 
+    lastStepDir = -1; // Говорим алгоритму: "В следующем цикле проверь, упало ли!"
+  }
+
+  autoCorrV = constrain(autoCorrV, -50, 50);
+  setDAC(); 
+}
+// ==================================================
+
+// ================= ОБНОВЛЕНИЕ ЦАП =================
+void setDAC() {
+   // === [АВТОКОРРЕКЦИЯ] УЧИТЫВАЕМ autoCorrV ===
+   int valV = map(setV, 0, conf.dacMaxV, 0, 4095) + conf.dacOffsetV + autoCorrV;
+   int valI = map(setI, 0, conf.dacMaxI, 0, 4095) + conf.dacOffsetI;
+   // ===========================================
+   
    dacV.setVoltage(constrain(valV, 0, 4095), false);
    dacI.setVoltage(constrain(valI, 0, 4095), false);
 }
 
-// --- Форматированный вывод (1234 -> 12.34) ---
 void printFormatted(int val) {  
-  if (val < 1000) lcd.print('0'); // Ведущий ноль
+  if (val < 1000) lcd.print('0');
   int whole  = val / 100;
-  int frac = val - (whole * 100); // Дробная часть
+  int frac = val - (whole * 100);
   lcd.print(whole); lcd.print('.');
-  if (frac < 10) lcd.print('0');  // Ноль перед дробной частью (.05)
+  if (frac < 10) lcd.print('0');  
   lcd.print(frac);
 }
-
