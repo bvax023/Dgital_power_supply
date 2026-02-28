@@ -33,6 +33,7 @@ struct Settings {
   int dacOffsetI;     // Смещение нуля ЦАП тока
   int limitV;         // Максимальное напряжение бп
   int limitI;         // Максимальный ток бп
+  int8_t corrTable[221]; // Таблица поправок нелинейности ЦАП (от 0 до 22.0В с шагом 0.5В)
 };
 
 Settings conf; // Создаем объект настроек в оперативной памяти
@@ -121,21 +122,39 @@ void setup() {
     conf.dacOffsetI = 52;
     conf.limitV = 2200;
     conf.limitI = 1000;
+    // Заполняем новую таблицу нулями при сбросе
+    for (int i = 0; i < 220; i++) {
+        conf.corrTable[i] = 0;
     EEPROM.put(0, conf); // Записываем дефолты при первом старте
+    }
   }
-  
   setDAC();     
   lcd.clear();
   drawSettings(); // Отрисовка нижней строки 
   drawSensors();  // Отрисовка верхней строки  
+  printCalibrationTable(); // Вывод таблицы корректирвока цап напряжения в serial
+}
+
+
+// ================= ВЫВОД ТАБЛИЦЫ В SERIAL =================
+void printCalibrationTable() {
+    Serial.println(F("=== Таблица калибровки ЦАП (Напряжение) ==="));
+    Serial.println(F("Уставка (В)\tПоправка (шаги ЦАП)"));
+    
+    for (int i = 0; i <= 220; i++) {
+        float volt = i * 0.1; // Переводим индекс в вольты
+        
+        Serial.print(volt, 1); // Печатаем напряжение с 1 знаком после запятой
+        Serial.print(F("\t\t")); // Знак табуляции для ровных столбцов
+        Serial.println(conf.corrTable[i]); // Печатаем поправку из массива
+    }    
 }
 
 // ================= ГЛАВНЫЙ ДИСПЕТЧЕР (LOOP) =================
-void loop() {
-  // 1. ФОНОВЫЕ ЗАДАЧИ И ОПРОС ЖЕЛЕЗА (Крутятся всегда без пауз)
+void loop() {  
   enc.tick();    // Опрос кнопки и таймеров энкодера (ОБЯЗАТЕЛЬНО!)
   readADS();     // Измерение напряжения и тока
-  corrDacV();    // Умная автокоррекция (работает только в STATE_MAIN)
+  //corrDacV();    // Автокоррекция цап напряжения
 
   // 2. БЕЗОПАСНОЕ ЧТЕНИЕ ШАГОВ ВРАЩЕНИЯ (Забираем шаги из прерывания один раз за цикл)
   int steps = 0;
@@ -162,7 +181,7 @@ void loop() {
 
 // ================= СОСТОЯНИЕ 1: ГЛАВНЫЙ ЭКРАН =================
 void handleMainState(int steps) {
-  // ВХОД В МЕНЮ: Красивая функция "Поворот вправо с зажатой кнопкой"
+  // ВХОД В МЕНЮ: Поворот вправо с зажатой кнопкой
   if (enc.isRightH()) {
       currentState = STATE_MENU;
       menuPage = 0;
@@ -257,15 +276,16 @@ void handleMenuState(int steps) {
       
       currentState = STATE_MAIN; // Возвращаемся в главный рабочий режим
       lcd.clear();
-      drawSettings(); 
-      drawSensors();
+      //drawSettings(); 
+      //drawSensors();
       return;
   }
 
   // --- ЛОГИКА РЕДАКТИРОВАНИЯ ПАРАМЕТРА ---
-  if (editMode) { 
+  if (editMode) {     
       if (steps != 0) {
          switch (menuPage) {
+          lcd.setCursor(0, 1);
             case 0: conf.limitV += steps * 10; break;      
             case 1: conf.limitI += steps * 10; break;      
             case 2: conf.corrV += steps * 0.0001; break;
@@ -274,43 +294,45 @@ void handleMenuState(int steps) {
             case 5: conf.corrI += steps * 0.0001; break;
             case 6: conf.dacOffsetI += steps; break;       
             case 7: conf.dacMaxI += steps; break;
+            case 8: runVoltageCalibration(); lcd.clear(); break;             
          }
          autoCorrV = 0; // Сброс поправки при изменении калибровок
          setDAC();      // Сразу применяем к железу
+         blinkState = true;     // Делаем курсор видимым при вращении
+         blinkTimer = millis(); // Сбрасываем таймер
+         drawSettings();        // Мгновенно обновляем экран
       }
-      if (enc.isClick()) editMode = false; // Клик - выход из редактирования
+      if (enc.isClick()) {
+         editMode = false;
+         drawSettings(); // Перерисовываем экран (чтобы стерся курсор)
+      }
       
-  } else { 
-      // --- ЛОГИКА НАВИГАЦИИ ПО СТРАНИЦАМ ---
-      if (steps != 0) {
-         menuPage += steps;
-         if (menuPage < 0) menuPage = 7;
-         if (menuPage > 7) menuPage = 0;
-         lcd.clear(); // Чистим экран только при смене страницы
+      } else { 
+        // --- ЛОГИКА НАВИГАЦИИ ПО СТРАНИЦАМ ---
+        if (steps != 0) {
+          menuPage += steps;
+          if (menuPage < 0) menuPage = 8;
+          if (menuPage > 8) menuPage = 0;
+          
+          lcd.clear(); 
+          drawSensors();  // Чтобы верхняя строка не исчезала при смене страницы
+          drawSettings(); // Отрисовываем новую страницу меню
+        }
+        
+        if (enc.isClick()) {
+          editMode = true; 
+          blinkState = true;     // Включаем курсор сразу при нажатии
+          blinkTimer = millis(); 
+          drawSettings();        // Отрисовываем появившийся курсор
+        }
       }
-      if (enc.isClick()) editMode = true; // Клик - проваливаемся в редактирование
-  }
 
-  // --- ОТРИСОВКА ИНТЕРФЕЙСА МЕНЮ (Нижняя строка) ---
-  lcd.setCursor(0, 1);
-  switch (menuPage) {
-      case 0: lcd.print(F("U Max")); printVal(conf.limitV/100.0, 2); break;
-      case 1: lcd.print(F("I Max")); printVal(conf.limitI/100.0, 2); break;
-      case 2: lcd.print(F("ADC V ")); printVal(conf.corrV, 4); break;
-      case 3: lcd.print(F("DAC Low")); printInt(conf.dacOffsetV); break;
-      case 4: lcd.print(F("DAC Max")); printInt(conf.dacMaxV); break;
-      case 5: lcd.print(F("ADC I ")); printVal(conf.corrI, 4); break;
-      case 6: lcd.print(F("DAC Low")); printInt(conf.dacOffsetI); break;
-      case 7: lcd.print(F("DAC Max")); printInt(conf.dacMaxI); break;
-  }
-    
-  // Мигающий курсор '<' в режиме редактирования
-  lcd.setCursor(15, 1);
-  if (editMode) {
-     if ((millis() / 300) % 2 == 0) lcd.print('<'); 
-     else lcd.print(' ');
-  } else {
-     lcd.print(' ');
+  // --- ОБРАБОТКА МИГАНИЯ КУРСОВА ---
+  // Мигаем только в режиме редактирования каждые 400 мс
+  if (editMode && (millis() - blinkTimer >= 400)) {
+      blinkTimer = millis();
+      blinkState = !blinkState; // Инверсия курсора
+      drawSettings();           // Обновляем только нижнюю строку
   }
 }
 
@@ -318,7 +340,7 @@ void handleMenuState(int steps) {
 void drawSensors() {
   lcd.setCursor(0, 0);
   if (readV < 10.0) lcd.print(' ');
-  lcd.print(readV, 2); lcd.print('V'); // Измеренное напряжение
+  lcd.print(readV, 3); lcd.print('V'); // Измеренное напряжение
   
   lcd.setCursor(9, 0);
   if (readI < 10.0) lcd.print(' ');
@@ -352,7 +374,31 @@ void drawSettings() {
        lcd.setCursor(x, 1);    
        lcd.print(' '); 
     }
+  } else if (currentState == STATE_MENU) { // Сервисное меню    
+    switch (menuPage) {
+        case 0: lcd.print(F("U Max")); printVal(conf.limitV/100.0, 2); break;
+        case 1: lcd.print(F("I Max")); printVal(conf.limitI/100.0, 2); break;
+        case 2: lcd.print(F("ADC V ")); printVal(conf.corrV, 4); break;
+        case 3: lcd.print(F("DAC Low")); printInt(conf.dacOffsetV); break;
+        case 4: lcd.print(F("DAC Max")); printInt(conf.dacMaxV); break;
+        case 5: lcd.print(F("ADC I ")); printVal(conf.corrI, 4); break;
+        case 6: lcd.print(F("DAC Low")); printInt(conf.dacOffsetI); break;
+        case 7: lcd.print(F("DAC Max")); printInt(conf.dacMaxI); break;
+        case 8: lcd.print(F("V AutoCalibr >")); break; 
+    }
+      
+    // Логика мигания курсора '<' в режиме редактирования
+    lcd.setCursor(15, 1);
+    if (editMode) {
+       // Используем общую переменную blinkState из STATE_SETUP!
+       if (blinkState) lcd.print('<'); 
+       else lcd.print(' ');
+    } else {
+       lcd.print(' ');
+    }
   }
+
+
 }
 
 // ================= ЧТЕНИЕ АЦП (ADS1115) =================
@@ -369,7 +415,8 @@ void readADS() {
   switch (adcStep) {
     // --- ЗАМЕР НАПРЯЖЕНИЯ (A0-A1) ---
     case 0: 
-      ads.startADCReading(ADS1X15_REG_CONFIG_MUX_DIFF_0_1, false);
+      //ads.startADCReading(ADS1X15_REG_CONFIG_MUX_DIFF_0_1, false);
+      ads.startADCReading(ADS1X15_REG_CONFIG_MUX_SINGLE_0, false);
       adcTimer = millis();
       adcStep = 1;
       break;
@@ -381,7 +428,7 @@ void readADS() {
         float pinV = rawV * ADC_STEP_MV; // Напряжение на ножке АЦП
         
         // Восстанавливаем напряжение (делитель) и применяем программную калибровку
-        readV = pinV * V_RES_DIVIDER * conf.corrV;
+        readV = (pinV * V_RES_DIVIDER * conf.corrV) + 0.017;
         if (readV < 0) readV = 0;
         
         drawSensors();
@@ -493,16 +540,116 @@ void corrDacV() {
 }
 
 // ================= ОБНОВЛЕНИЕ ЦАП =================
-void setDAC() {
-   // Преобразуем уставки 0..Max в 12-битный формат ЦАП (0..4095)
+/*
+void setDAC() {   
    // Используем калибровки масштаба (dacMax), смещения нуля (dacOffset) и автокоррекцию
-   int valV = map(setV, 0, conf.dacMaxV, 0, 4095) + conf.dacOffsetV + autoCorrV;
-   int valI = map(setI, 0, conf.dacMaxI, 0, 4095) + conf.dacOffsetI;
+   //int valV = map(setV, 0, conf.dacMaxV, 0, 4095) + conf.dacOffsetV + autoCorrV;
+   //int valI = map(setI, 0, conf.dacMaxI, 0, 4095) + conf.dacOffsetI;
+   
+   // Добавляем половину делителя (conf.dacMax / 2) для правильного математического округления
+   int valV = ((long)setV * 4095L + (conf.dacMaxV / 2)) / conf.dacMaxV + conf.dacOffsetV + autoCorrV;
+   int valI = ((long)setI * 4095L + (conf.dacMaxI / 2)) / conf.dacMaxI + conf.dacOffsetI;
    
    // Жестко ограничиваем, чтобы не выйти за пределы 12 бит при отрицательных смещениях
    dacV.setVoltage(constrain(valV, 0, 4095), false);
    dacI.setVoltage(constrain(valI, 0, 4095), false);
 }
+*/
+
+// ================= ОБНОВЛЕНИЕ ЦАП =================
+void setDAC() {
+   int baseValV = ((long)setV * 4095L + (conf.dacMaxV / 2)) / conf.dacMaxV + conf.dacOffsetV;
+
+   // ИЗМЕНЕНО: Делим на 10 (шаг 0.10 В), прибавляем 5 для правильного округления
+   int index = (setV + 5) / 10; 
+   
+   // ИЗМЕНЕНО: Максимальный индекс теперь 220 (что равно 22.00 В)
+   if (index > 220) index = 220; 
+   
+   int tableCorr = conf.corrTable[index];
+
+   int valV = baseValV + tableCorr + autoCorrV;
+   int valI = ((long)setI * 4095L + (conf.dacMaxI / 2)) / conf.dacMaxI + conf.dacOffsetI;
+   
+   dacV.setVoltage(constrain(valV, 0, 4095), false);
+   dacI.setVoltage(constrain(valI, 0, 4095), false);
+}
+
+// ================= АВТОКАЛИБРОВКА НЕЛИНЕЙНОСТИ ЦАП =================
+void runVoltageCalibration() {
+    // Убрали подтверждение и задержку. Калибровка начинается сразу!
+    autoCorrV = 0; 
+
+    // Крутим цикл от 1 до 220
+    for (int i = 1; i <= 220; i++) {
+        
+        int targetV_100 = i * 10; 
+        float target_f = targetV_100 / 100.0;
+
+        int baseDac = ((long)targetV_100 * 4095L + (conf.dacMaxV / 2)) / conf.dacMaxV + conf.dacOffsetV;
+        int currentOffset = 0;
+
+        dacV.setVoltage(constrain(baseDac + currentOffset, 0, 4095), false);
+        
+        uint32_t settleTimer = millis();
+        bool firstWait = true; 
+        int stableCount = 0; // НОВОЕ: Счетчик стабильных попаданий в окно
+
+        while (true) {
+            enc.tick(); 
+            if (enc.isClick()) { 
+                lcd.setCursor(0, 1); 
+                lcd.print(F("Aborted!        ")); 
+                delay(1000); 
+                return;
+            }
+            
+            readADS(); 
+
+            uint32_t waitTime = firstWait ? 800 : 200; 
+            if (millis() - settleTimer < waitTime) continue; 
+
+            if (newVoltageReady) {
+                newVoltageReady = false;
+                firstWait = false; 
+                
+                float error = target_f - readV;
+                
+                lcd.setCursor(0, 1);
+                lcd.print(F("S:")); lcd.print(target_f, 2); 
+                lcd.print(F(" A:")); lcd.print(readV, 2); lcd.print(F(" "));
+
+                // === НОВАЯ ЛОГИКА СТАБИЛИЗАЦИИ ===
+                if (abs(error) <= 0.004) {
+                    stableCount++; // Попали в окно! Увеличиваем счетчик
+                    
+                    if (stableCount >= 3) { // Если 3 раза подряд (около 400 мс) держимся стабильно
+                        conf.corrTable[i] = currentOffset; 
+                        break; // Сохраняем и переходим к следующему напряжению
+                    }
+                } else {
+                    stableCount = 0; // Напряжение вылетело из окна - сбрасываем счетчик стабильности
+                    
+                    // Подкручиваем ЦАП
+                    if (error > 0) currentOffset++;
+                    else currentOffset--;
+
+                    currentOffset = constrain(currentOffset, -128, 127); 
+                    dacV.setVoltage(constrain(baseDac + currentOffset, 0, 4095), false);
+                    settleTimer = millis(); // Сбрасываем таймер только если мы двигали ЦАП!
+                }
+            }
+        } 
+    } 
+    
+    conf.corrTable[0] = 0; 
+    
+    lcd.setCursor(0, 1);
+    lcd.print(F("Success!        "));
+    EEPROM.put(0, conf); 
+    delay(1500);
+}
+
 
 // ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ВЫВОДА =================
 // Печать целых чисел со смещением для выравнивания
