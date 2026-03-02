@@ -108,11 +108,11 @@ void setup() {
   EEPROM.get(0, conf);
   if (conf.key != EEPROM_KEY) {
     conf.key = EEPROM_KEY;
-    conf.corrV = 0.9975;
-    conf.corrI = 0.9995;
-    conf.dacMaxV = 3125;
-    conf.dacOffsetV = -1;
-    conf.dacMaxI = 1060; 
+    conf.corrV = 0.9910;
+    conf.corrI = 1.0063;
+    conf.dacMaxV = 3126;
+    conf.dacOffsetV = 0;
+    conf.dacMaxI = 1062; 
     conf.dacOffsetI = 52;
     conf.limitV = 2200;
     conf.limitI = 1000;
@@ -549,7 +549,7 @@ void setDAC() {
 
 // ================= ОБНОВЛЕНИЕ ЦАП =================
 void setDAC() {
-   int baseValV = ((long)setV * 4095L + (conf.dacMaxV / 2)) / conf.dacMaxV + conf.dacOffsetV;
+   int baseValV = ((long)setV * 4095L + (conf.dacMaxV / 2)) / conf.dacMaxV + conf.dacOffsetV;  
 
    // ИЗМЕНЕНО: Делим на 10 (шаг 0.10 В), прибавляем 5 для правильного округления
    int index = (setV + 5) / 10; 
