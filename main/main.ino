@@ -141,17 +141,22 @@ void loop() {
     interrupts();       // Включаем прерывания обратно
   }
 
-  // 3. ДИСПЕТЧЕР СОСТОЯНИЙ (Передает шаги энкодера в текущий режим)
+  // === ОБНОВЛЕНИЕ ДИСПЛЕЯ ===
+  if (newVoltageReady || newAmpereReady) { // Обновляем дисплей по флагам готовности замера тока или напряжения 
+      displayUpdatLine1();      
+      if (newAmpereReady && currentState == STATE_MAIN) { // если на главном экране, считаем ваты
+          readP = readV * readI; // Считаем мощность
+          displayUpdatLine2();   // Выводим Ватты
+      }      
+      newVoltageReady = false;
+      newAmpereReady = false;
+  }
+
+  // === ДИСПЕТЧЕР СОСТОЯНИЙ ===
   switch (currentState) {
-    case STATE_MAIN:  
-      mainState(steps);
-      break;
-    case STATE_SETUP: 
-      setupState(steps); 
-      break;
-    case STATE_MENU:  
-      menuState(steps); 
-      break;
+    case STATE_MAIN:  mainState(steps);  break;
+    case STATE_SETUP: setupState(steps); break;
+    case STATE_MENU:  menuState(steps);  break;
   }
 }
 
@@ -320,7 +325,7 @@ void readADS() {
       break;
 
     case 1: // Ждем по таймеру и читаем напряжение      
-      if (millis() - adcTimer >= CONV_TIME) {
+      if (millis() - adcTimer >= CONV_TIME) { // Ждем по таймеру и читаем напряжение 
         int16_t rawV = ads.getLastConversionResults();
         float pinV = rawV * ADCV_STEP_MV; // Напряжение на ножке АЦП        
         readV = (pinV * V_RES_DIVIDER * conf.corrV); 
@@ -339,18 +344,16 @@ void readADS() {
 
     case 3: 
       if (millis() - adcTimer >= CONV_TIME) {
-        int16_t rawI = ads.getLastConversionResults();             
+        int16_t rawI = ads.getLastConversionResults();                     
         float pinI_mV = rawI * ADCI_STEP_MV;        
-        readI = (pinI_mV / 0.025) * conf.corrI; // Делим на сопротивление шунта 0.025 Ом и применяем калибровку
-        if (rawI < 0) rawI = 0;
+        readI = (pinI_mV / 0.025) * conf.corrI; // Делим на сопротивление шунта 0.025 Ом и применяем калибровку  
+        if (readI < 0) readI = 0;      
         newAmpereReady = true; // флаг новых данных
         adcStep = 0;  // Начинаем цикл опроса заново
       }
       break;
   }
 }
-
-
 
 // ================= ОБНОВЛЕНИЕ ЦАП =================
 /*
@@ -371,16 +374,13 @@ void setDAC() {
 
 // ================= ОБНОВЛЕНИЕ ЦАП =================
 void setDAC() {
-   int baseValV = ((long)setV * 4095L + (conf.dacMaxV / 2)) / conf.dacMaxV + conf.dacOffsetV;  
-
-   // ИЗМЕНЕНО: Делим на 10 (шаг 0.10 В), прибавляем 5 для правильного округления
-   int index = (setV + 5) / 10; 
-   
-   // ИЗМЕНЕНО: Максимальный индекс теперь 220 (что равно 22.00 В)
+   // setV превращаем в диапазон от 0 до 4095 для 12-битного ЦАП с округлением 
+   int baseValV = ((long)setV * 4095L + (conf.dacMaxV / 2)) / conf.dacMaxV + conf.dacOffsetV;     
+   int index = (setV + 5) / 10; // индекс для tableCorr 
+  
    if (index > 220) index = 220; 
    
    int tableCorr = conf.corrTable[index];
-
    int valV = baseValV + tableCorr + autoCorrV;
    int valI = ((long)setI * 4095L + (conf.dacMaxI / 2)) / conf.dacMaxI + conf.dacOffsetI;
    
