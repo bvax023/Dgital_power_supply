@@ -5,20 +5,16 @@ void menuState(int steps) {
       lcd.clear();
       lcd.print(F("Saving..."));
       EEPROM.put(0, conf); // Записываем структуру настроек в память
-      delay(1000);
-      
-      currentState = STATE_MAIN; // Возвращаемся в главный рабочий режим
-      lcd.clear();
-      //drawSettings(); 
-      //drawSensors();
+      delay(1000);      
+      lcd.clear(); 
+      currentState = STATE_MAIN; // Возвращаемся в главный рабочий режим   
       return;
   }
 
   // --- ЛОГИКА РЕДАКТИРОВАНИЯ ПАРАМЕТРА ---
   if (editMode) {     
       if (steps != 0) {
-         switch (menuPage) {
-          lcd.setCursor(0, 1);
+         switch (menuPage) {          
             case 0: conf.limitV += steps * 10; break;      
             case 1: conf.limitI += steps * 10; break;      
             case 2: conf.corrV += steps * 0.0001; break;
@@ -33,11 +29,11 @@ void menuState(int steps) {
          setDAC();      // Сразу применяем к железу
          blinkState = true;     // Делаем курсор видимым при вращении
          blinkTimer = millis(); // Сбрасываем таймер
-         drawSettings();        // Мгновенно обновляем экран
+         displayUpdatLine2();        // Мгновенно обновляем экран
       }
       if (enc.isClick()) {
          editMode = false;
-         drawSettings(); // Перерисовываем экран (чтобы стерся курсор)
+         displayUpdatLine2(); // Перерисовываем экран (чтобы стерся курсор)
       }
       
       } else { 
@@ -48,15 +44,15 @@ void menuState(int steps) {
           if (menuPage > 8) menuPage = 0;
           
           lcd.clear(); 
-          drawSensors();  // Чтобы верхняя строка не исчезала при смене страницы
-          drawSettings(); // Отрисовываем новую страницу меню
+          displayUpdatLine1();  // Чтобы верхняя строка не исчезала при смене страницы
+          displayUpdatLine2(); // Отрисовываем новую страницу меню
         }
         
         if (enc.isClick()) {
           editMode = true; 
           blinkState = true;     // Включаем курсор сразу при нажатии
           blinkTimer = millis(); 
-          drawSettings();        // Отрисовываем появившийся курсор
+          displayUpdatLine2();        // Отрисовываем появившийся курсор
         }
       }
 
@@ -65,6 +61,6 @@ void menuState(int steps) {
   if (editMode && (millis() - blinkTimer >= 400)) {
       blinkTimer = millis();
       blinkState = !blinkState; // Инверсия курсора
-      drawSettings();           // Обновляем только нижнюю строку
+      displayUpdatLine2();           // Обновляем только нижнюю строку
   }
 }

@@ -92,7 +92,7 @@ void corrDacV() {
   static float prevV = 0;       // Напряжение до шага    
   static int8_t lastStep = 0;   // 1 = шагнули вверх, -1 = вниз, 0 = стоим 
   static bool ccBlock = false;  // Флаг блокировки при ограничении тока 
-  Serial.println(autoCorrV);
+
   if (!newVoltageReady) return; 
   newVoltageReady = false;
 
