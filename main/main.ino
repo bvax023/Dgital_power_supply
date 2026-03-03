@@ -61,6 +61,7 @@ int tempC = 35;        // Заглушка температуры
 
 // Флаг, который АЦП будет "поднимать", когда прочитал свежее напряжение
 bool newVoltageReady = false;
+bool newAmpereReady = false;
 
 int cursorStep = 1;    // Для установки напряжения или тока, 0 - десятки, 1 - едииницы, 2 - десятые, 3 - сотые
 bool setEdit = true;   // true = Set V (Напряжение), false = Set I (Ток)
@@ -321,17 +322,10 @@ void readADS() {
     case 1: // Ждем по таймеру и читаем напряжение      
       if (millis() - adcTimer >= CONV_TIME) {
         int16_t rawV = ads.getLastConversionResults();
-        float pinV = rawV * ADCV_STEP_MV; // Напряжение на ножке АЦП
-        
-        // Восстанавливаем напряжение (делитель) и применяем программную калибровку
+        float pinV = rawV * ADCV_STEP_MV; // Напряжение на ножке АЦП        
         readV = (pinV * V_RES_DIVIDER * conf.corrV); 
-        if (readV < 0) readV = 0;
-        
-        displayUpdatLine1();
-        if (currentState == STATE_MAIN) displayUpdatLine2(); // Обновляем Ватты только на главном экране
-        
-        // СИГНАЛ ДЛЯ АВТОКОРРЕКЦИИ
-        newVoltageReady = true;
+        if (readV < 0) readV = 0;               
+        newVoltageReady = true; // флаг новых данных
         adcStep = 2; // Идем мерить ток
       }
       break;
@@ -345,19 +339,11 @@ void readADS() {
 
     case 3: 
       if (millis() - adcTimer >= CONV_TIME) {
-        int16_t rawI = ads.getLastConversionResults();
-        if (rawI < 0) rawI = 0;       
-
-        // 1. Напряжение на ножке АЦП в Вольтах, домножаем на делитель
-        //float pinI_mV = rawI * ADC_STEP_MV * I_RES_DIVIDER;
-        float pinI_mV = rawI * ADCI_STEP_MV;
-        // 2. Делим на сопротивление шунта 0.025 Ом и применяем калибровку
-        readI = (pinI_mV / 0.025) * conf.corrI;
-        readP = readV * readI; // Расчет мощности
-
-        displayUpdatLine1();
-        if (currentState == STATE_MAIN) displayUpdatLine2();
-        
+        int16_t rawI = ads.getLastConversionResults();             
+        float pinI_mV = rawI * ADCI_STEP_MV;        
+        readI = (pinI_mV / 0.025) * conf.corrI; // Делим на сопротивление шунта 0.025 Ом и применяем калибровку
+        if (rawI < 0) rawI = 0;
+        newAmpereReady = true; // флаг новых данных
         adcStep = 0;  // Начинаем цикл опроса заново
       }
       break;
