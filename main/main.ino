@@ -115,7 +115,7 @@ void setup() {
     conf.limitV = 2200;
     conf.limitI = 1000;
     // Заполняем новую таблицу нулями при сбросе
-    for (int i = 0; i < 220; i++) {
+    for (int i = 0; i < conf.limitV / 10; i++) {
         conf.corrTable[i] = 0;
     EEPROM.put(0, conf); // Записываем дефолты при первом старте
     }
@@ -286,8 +286,8 @@ void displayUpdatLine2() {
     
     case STATE_MENU: // Системное меню
       switch (menuPage) {        
-          case 0: lcd.print(F("U Max")); printVal(conf.limitV/100.0, 2); break;
-          case 1: lcd.print(F("I Max")); printVal(conf.limitI/100.0, 2); break;
+          case 0: lcd.print(F("U Max ")); printFormatted(conf.limitV); break;
+          case 1: lcd.print(F("I Max ")); printFormatted(conf.limitI); break;
           case 2: lcd.print(F("ADC V ")); printVal(conf.corrV, 4); break;
           case 3: lcd.print(F("DAC Low")); printInt(conf.dacOffsetV); break;
           case 4: lcd.print(F("DAC Max")); printInt(conf.dacMaxV); break;
@@ -328,7 +328,7 @@ void readADS() {
       if (millis() - adcTimer >= CONV_TIME) { // Ждем по таймеру и читаем напряжение 
         int16_t rawV = ads.getLastConversionResults();
         float pinV = rawV * ADCV_STEP_MV; // Напряжение на ножке АЦП        
-        readV = (pinV * V_RES_DIVIDER * conf.corrV); 
+        readV = (pinV * V_RES_DIVIDER * conf.corrV);        
         if (readV < 0) readV = 0;               
         newVoltageReady = true; // флаг новых данных
         adcStep = 2; // Идем мерить ток

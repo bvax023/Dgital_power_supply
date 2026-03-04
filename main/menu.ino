@@ -1,13 +1,13 @@
 // ================= СОСТОЯНИЕ 3: СЕРВИСНОЕ МЕНЮ =================
 void menuState(int steps) {
-  // ВЫХОД ИЗ МЕНЮ И СОХРАНЕНИЕ: Красивая функция "Поворот влево с зажатой кнопкой"
+  // ВЫХОД ИЗ МЕНЮ И СОХРАНЕНИЕ: Поворот влево с зажатой кнопкой
   if (enc.isLeftH()) {    
       lcd.clear();
       lcd.print(F("Saving..."));
       EEPROM.put(0, conf); // Записываем структуру настроек в память
       delay(1000);      
       lcd.clear(); 
-      currentState = STATE_MAIN; // Возвращаемся в главный рабочий режим   
+      currentState = STATE_MAIN; // Возвращаемся на главный экран  
       return;
   }
 
@@ -23,17 +23,17 @@ void menuState(int steps) {
             case 5: conf.corrI += steps * 0.0001; break;
             case 6: conf.dacOffsetI += steps; break;       
             case 7: conf.dacMaxI += steps; break;
-            case 8: runVoltageCalibration(); lcd.clear(); break;             
+            case 8: runVoltageCalibration(); lcd.clear(); break; // Эта функция блокирующая. Пока она работает, главный цикл loop() стоит на паузе            
          }
-         autoCorrV = 0; // Сброс поправки при изменении калибровок
-         setDAC();      // Сразу применяем к железу
-         blinkState = true;     // Делаем курсор видимым при вращении
-         blinkTimer = millis(); // Сбрасываем таймер
-         displayUpdatLine2();        // Мгновенно обновляем экран
+         autoCorrV = 0;          // Сброс поправки при изменении калибровок
+         setDAC();               // Сразу применяем к железу
+         blinkState = true;      // Делаем курсор видимым при вращении
+         blinkTimer = millis();  // Сбрасываем таймер
+         displayUpdatLine2();        
       }
       if (enc.isClick()) {
          editMode = false;
-         displayUpdatLine2(); // Перерисовываем экран (чтобы стерся курсор)
+         displayUpdatLine2(); // Перерисовываем экран чтобы стерся курсор
       }
       
       } else { 
@@ -45,14 +45,14 @@ void menuState(int steps) {
           
           lcd.clear(); 
           displayUpdatLine1();  // Чтобы верхняя строка не исчезала при смене страницы
-          displayUpdatLine2(); // Отрисовываем новую страницу меню
+          displayUpdatLine2();  // Отрисовываем новую страницу меню
         }
         
         if (enc.isClick()) {
           editMode = true; 
-          blinkState = true;     // Включаем курсор сразу при нажатии
+          blinkState = true;      // Включаем курсор сразу при нажатии
           blinkTimer = millis(); 
-          displayUpdatLine2();        // Отрисовываем появившийся курсор
+          displayUpdatLine2();    // Отрисовываем появившийся курсор
         }
       }
 
@@ -60,7 +60,7 @@ void menuState(int steps) {
   // Мигаем только в режиме редактирования каждые 400 мс
   if (editMode && (millis() - blinkTimer >= 400)) {
       blinkTimer = millis();
-      blinkState = !blinkState; // Инверсия курсора
-      displayUpdatLine2();           // Обновляем только нижнюю строку
+      blinkState = !blinkState;  // Инверсия курсора
+      displayUpdatLine2();       // Обновляем только нижнюю строку
   }
 }
