@@ -9,7 +9,9 @@ void runVoltageCalibration() { // Эта функция блокирующая. 
     lcd.print(F("Click to Exit"));
     delay(1500); 
     lcd.clear(); 
-    int currentOffset = 0; // Колицество шагов ЦАП для калибровки    
+    int currentOffset = 0; // Колицество шагов ЦАП для калибровки  
+
+    readADS();  // ОПРОС АЦП (Вызываем вручную, так как главный loop() заблокирован)  
 
     // === ГЛАВНЫЙ ЦИКЛ КАЛИБРОВКИ (Идем шагами по 0.1 Вольта) ===
     for (int i = 1; i <= conf.limitV / 10; i++) {           
@@ -36,24 +38,25 @@ void runVoltageCalibration() { // Эта функция блокирующая. 
                 lcd.clear();
                 return; // Полный выход из функции калибровки
             }
-            
-            readADS();  // ОПРОС АЦП (Вызываем вручную, так как главный loop() заблокирован)
-            displayUpdatLine1();
 
-            lcd.setCursor(0, 1);
-            lcd.print(floatDacV, 1); lcd.print(F("V ")); 
-            lcd.print(F("Offset:")); lcd.print(currentOffset); lcd.print(F("  "));
+            readADS();  // ОПРОС АЦП (Вызываем вручную, так как главный loop() заблокирован)          
             
             // ЕСЛИ ПОЛУЧИЛИ НОВЫЙ ЗАМЕР ОТ АЦП
             if (newVoltageReady) {
-                newVoltageReady = false;                
+                newVoltageReady = false; 
+                
+                displayUpdatLine1();
+
+                lcd.setCursor(0, 1);
+                lcd.print(floatDacV, 1); lcd.print(F("V ")); 
+                lcd.print(F("Offset:")); lcd.print(currentOffset); lcd.print(F("  "));               
                 
                 // Проверяем стабильность напряжения на выходе 
                 if (abs(readV - lastReadV) > 0.002) stableV = 0; // Если разница больше 0.002 сбрасываем флаг stableV = 0                    
                 else stableV++;  
                             
                 lastReadV = readV; // Обновляем значение для сравнения            
-                if (stableV <= 1) continue; // пропускаем цикл пока напряжение не стабилизируется                                                            
+                if (stableV <= 2) continue; // пропускаем цикл пока напряжение не стабилизируется                                                            
                 
                 float error = floatDacV - readV; // Ошибка между выставленным и измерянным напряжением
                 if (abs(error) <= 0.004) { // Если ошибка меньше                     

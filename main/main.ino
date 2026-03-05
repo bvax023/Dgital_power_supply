@@ -116,9 +116,9 @@ void setup() {
     conf.limitI = 1000;
     // Заполняем новую таблицу нулями при сбросе
     for (int i = 0; i < conf.limitV / 10; i++) {
-        conf.corrTable[i] = 0;
-    EEPROM.put(0, conf); // Записываем дефолты при первом старте
+        conf.corrTable[i] = 0;    
     }
+    EEPROM.put(0, conf); // Записываем дефолты при первом старте
   }
   setDAC();     
   lcd.clear();
@@ -252,11 +252,11 @@ void setupState(int steps) {
 void displayUpdatLine1() {
   lcd.setCursor(0, 0);
   if (readV < 10.0) lcd.print(' ');
-  lcd.print(readV, 2); lcd.print('V'); // Измеренное напряжение
+  lcd.print(readV, 2); lcd.print("V  "); // Измеренное напряжение
   
   lcd.setCursor(9, 0);
   if (readI < 10.0) lcd.print(' ');
-  lcd.print(readI, 3); lcd.print('A'); // Измеренный ток
+  lcd.print(readI, 3); lcd.print("A "); // Измеренный ток
 }
 
 // ================= ОТРИСОВКА НИЖНЕЙ СТРОКИ =================
