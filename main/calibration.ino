@@ -111,6 +111,7 @@ void printCalibrationTable() {
 
 // === АВТОКОРРЕКЦИЯ ЦАП ===
 void corrDacV() {
+    if (conf.corrDacVEn == 0) return;    
     float static lastReadV = -1.0;     // Переменная для хранения прошлого замера АЦП
     int static stableV = 0;         // Счетчик стабильности измеренного напряжения    
     static uint32_t ccTimer = 0;

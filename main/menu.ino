@@ -23,7 +23,15 @@ void menuState(int steps) {
             case 5: conf.corrI += steps * 0.0001; break;
             case 6: conf.dacOffsetI += steps; break;       
             case 7: conf.dacMaxI += steps; break;
-            case 8: runVoltageCalibration(); lcd.clear(); break; // Эта функция блокирующая. Пока она работает, главный цикл loop() стоит на паузе            
+            case 8: runVoltageCalibration(); lcd.clear(); break; // Эта функция блокирующая. Пока она работает, главный цикл loop() стоит на паузе
+            case 9: if (steps > 0) conf.corrDacVEn = 1;      // Крутим вправо — Включаем
+                    else if (steps < 0) conf.corrDacVEn = 0; // Крутим влево — Выключаем 
+                                       
+                    if (conf.corrDacVEn == 0) { 
+                        autoCorrV = 0;
+                        setDAC();
+                    }
+                    break;
          }
          autoCorrV = 0;          // Сброс поправки при изменении калибровок
          setDAC();               // Сразу применяем к железу
@@ -40,8 +48,8 @@ void menuState(int steps) {
         // --- ЛОГИКА НАВИГАЦИИ ПО СТРАНИЦАМ ---
         if (steps != 0) {
           menuPage += steps;
-          if (menuPage < 0) menuPage = 8;
-          if (menuPage > 8) menuPage = 0;
+          if (menuPage < 0) menuPage = 9;
+          if (menuPage > 9) menuPage = 0;
           
           lcd.clear(); 
           displayUpdatLine1();  // Чтобы верхняя строка не исчезала при смене страницы

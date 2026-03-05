@@ -33,6 +33,7 @@ struct Settings {
   int dacOffsetI;     // Смещение нуля ЦАП тока
   int limitV;         // Максимальное напряжение бп
   int limitI;         // Максимальный ток бп
+  byte corrDacVEn;    // corrDacV вкл, выкл
   int8_t corrTable[221]; // Таблица поправок нелинейности ЦАП (от 0 до 22.0В с шагом 0.5В)
 };
 
@@ -114,6 +115,7 @@ void setup() {
     conf.dacOffsetI = 52;
     conf.limitV = 2200;
     conf.limitI = 1000;
+    conf.corrDacVEn = 0;
     // Заполняем новую таблицу нулями при сбросе
     for (int i = 0; i < conf.limitV / 10; i++) {
         conf.corrTable[i] = 0;    
@@ -302,6 +304,9 @@ void displayUpdatLine2() {
           case 6: lcd.print(F("DAC Low")); printInt(conf.dacOffsetI); break;
           case 7: lcd.print(F("DAC Max")); printInt(conf.dacMaxI); break;
           case 8: lcd.print(F("V AutoCalibr")); break;
+          case 9: lcd.print(F("corrDacV: "));
+                  lcd.print(conf.corrDacVEn ? F("ON ") : F("OFF")); 
+                  break;
       }
         
       // Мигание курсора '<'
