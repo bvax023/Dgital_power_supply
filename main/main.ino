@@ -129,8 +129,7 @@ void setup() {
 
 void loop() {  
   enc.tick();    // Опрос кнопки и таймеров энкодера (ОБЯЗАТЕЛЬНО!)
-  readADS();     // Измерение напряжения и тока
-  //corrDacV();    // Автокоррекция цап напряжения
+  readADS();     // Измерение напряжения и тока  
 
   // 2. БЕЗОПАСНОЕ ЧТЕНИЕ ШАГОВ ВРАЩЕНИЯ (Забираем шаги из прерывания один раз за цикл)
   int steps = 0;
@@ -147,13 +146,17 @@ void loop() {
       if (newAmpereReady && currentState == STATE_MAIN) { // если на главном экране, считаем ваты
           readP = readV * readI; // Считаем мощность
           displayUpdatLine2();   // Выводим Ватты
-      }      
-      newVoltageReady = false;
-      newAmpereReady = false;
+      }
 
-      isCCMode(); // Проверкса СС режима
-      Serial.print("isCC: ");
-      Serial.println(isCCMode());
+      isCCMode(); // Проверкса СС режима 
+      corrDacV(); // Автокоррекция ЦАП напряжения 
+
+      newVoltageReady = false;
+      newAmpereReady = false; 
+
+      Serial.print(F(" | Mode: ")); Serial.print(isCCMode() ? F("CC") : F("CV"));
+      Serial.print(F(" | Corr: ")); Serial.println(autoCorrV);
+ 
   }
 
   // === ДИСПЕТЧЕР СОСТОЯНИЙ ===
@@ -380,12 +383,10 @@ void setDAC() {
 void setDAC() {
    // setV превращаем в диапазон от 0 до 4095 для 12-битного ЦАП с округлением 
    int baseValV = ((long)setV * 4095L + (conf.dacMaxV / 2)) / conf.dacMaxV + conf.dacOffsetV;     
-   int index = (setV + 5) / 10; // индекс для tableCorr 
-  
-   if (index > 220) index = 220; 
-   
+   int index = (setV + 5) / 10; // индекс для tableCorr    
    int tableCorr = conf.corrTable[index];
    int valV = baseValV + tableCorr + autoCorrV;
+   
    int valI = ((long)setI * 4095L + (conf.dacMaxI / 2)) / conf.dacMaxI + conf.dacOffsetI;
    
    dacV.setVoltage(constrain(valV, 0, 4095), false);
