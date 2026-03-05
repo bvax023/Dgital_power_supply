@@ -23,7 +23,7 @@ void runVoltageCalibration() { // Эта функция блокирующая. 
 
         int baseDac = ((long)setDacV * 4095L + (conf.dacMaxV / 2)) / conf.dacMaxV + conf.dacOffsetV; // Значение ЦАП        
        
-        dacV.setVoltage(constrain(baseDac + currentOffset, 0, 4095), false); // Задаем напряжение на ЦАП      
+        dacV.setVoltage(constrain(baseDac + currentOffset, 0, 4095), false); // Задаем напряжение на ЦАП     
 
         // Крутимся здесь, пока не найдем значение currentOffset
         while (true) {          
@@ -46,20 +46,22 @@ void runVoltageCalibration() { // Эта функция блокирующая. 
             
             // ЕСЛИ ПОЛУЧИЛИ НОВЫЙ ЗАМЕР ОТ АЦП
             if (newVoltageReady) {
-                newVoltageReady = false; 
+                newVoltageReady = false;                
                 
                 // Проверяем стабильность напряжения на выходе 
                 if (abs(readV - lastReadV) > 0.002) stableV = 0; // Если разница больше 0.002 сбрасываем флаг stableV = 0                    
                 else stableV++;  
-                             
+                            
                 lastReadV = readV; // Обновляем значение для сравнения            
-                if (stableV < 2) continue; // пропускаем цикл пока напряжение не стабилизируется                   
+                if (stableV <= 1) continue; // пропускаем цикл пока напряжение не стабилизируется                                                            
                 
                 float error = floatDacV - readV; // Ошибка между выставленным и измерянным напряжением
                 if (abs(error) <= 0.004) { // Если ошибка меньше                     
-                    stableCount++;                    
-                    if (stableCount >= 3) { // Попали 3 раза подряд — значит это не случайность                        
-                        conf.corrTable[i] = currentOffset; // Записываем найденную поправку в массив EEPROM
+                    stableCount++;   
+                    stableV = 0; // Сбрасываем счетчик стабильности измеренного напряжения  
+                                  
+                    if (stableCount >= 3) { // Попали 3 раза подряд — значит это не случайность                                 
+                        conf.corrTable[i] = currentOffset; // Записываем найденную поправку в массив EEPROM                        
                         break; // Выходим из цикла while. Цикл for перейдет к следующему значению напряжения
                     }
                 } else { // Ошибка больше 0.004               
@@ -67,7 +69,7 @@ void runVoltageCalibration() { // Эта функция блокирующая. 
                     // Делаем шаг ЦАП в нужную сторону
                     if (error > 0) currentOffset++; // Если напряжение меньше цели — прибавляем
                     else currentOffset--;           // Если больше — убавляем
-
+                    
                     currentOffset = constrain(currentOffset, -15, 15); // Ограничиваем поправку                   
                     dacV.setVoltage(constrain(baseDac + currentOffset, 0, 4095), false); // Отправляем новое значение в ЦАП
 
@@ -107,31 +109,39 @@ void printCalibrationTable() {
 // === АВТОКОРРЕКЦИЯ ЦАП ===
 void corrDacV() {
     float static lastReadV = -1.0;     // Переменная для хранения прошлого замера АЦП
-    int static stableV = 0;         // Счетчик стабильности измеренного напряжения
+    int static stableV = 0;         // Счетчик стабильности измеренного напряжения    
     static uint32_t ccTimer = 0;
+    static int lastSetV = -1;      
 
-    if (isCCMode()) {
-        autoCorrV = 0;
+    // Если крутим энкодер                                       
+    if (setV != lastSetV || setV == 0) {
+        lastSetV = setV;        
+        return;         
+    }
+
+    if (isCCMode()) {        
         return; // Если мы в режиме CC — выходим   
     }   
 
-    // Проверяем стабильность напряжения на выходе 
+    // Проверяем стабильность напряжения на выходе     
     if (abs(readV - lastReadV) > 0.002) stableV = 0; // Если разница больше 0.002 сбрасываем флаг stableV = 0                    
     else stableV++;  
                              
-    lastReadV = readV; // Обновляем значение для сравнения            
-    if (stableV < 2) {       
-        return; // Выходим, напряжение не стабилизировалось
-    }   
+    lastReadV = readV; // Обновляем значение для сравнения                
+    if (stableV <= 2) return; // Выход, пока напряжение не стабилизируется   
+
+    stableV = constrain(stableV, 0, 2); // Ограничиваем переменную 
 
     float error = (setV / 100.0) - readV; // Ошибка между заданным и измерянным 
 
-    if (abs(error) > 0.005) {
+    if (abs(error) <= 0.005) {                             
+        return;        
+    } else {
         if (error > 0) autoCorrV++; // Напряжение ниже, добавляем шаг ЦАП
         else autoCorrV--;           // Напряжение выше, убавляем шаг ЦАП
         
         autoCorrV = constrain(autoCorrV, -5, 5);
-        stableV = 0;
+        stableV = 0;        
         lastReadV = -1.0;
         setDAC();        
     }

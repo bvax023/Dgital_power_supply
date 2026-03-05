@@ -124,7 +124,7 @@ void setup() {
   lcd.clear();
   displayUpdatLine2(); // Отрисовка нижней строки 
   displayUpdatLine1();  // Отрисовка верхней строки  
-  //printCalibrationTable(); // Вывод таблицы корректирвока цап напряжения в serial
+  printCalibrationTable(); // Вывод таблицы корректирвока цап напряжения в serial
 }
 
 void loop() {  
@@ -154,7 +154,7 @@ void loop() {
       newVoltageReady = false;
       newAmpereReady = false; 
 
-      Serial.print(F(" | Mode: ")); Serial.print(isCCMode() ? F("CC") : F("CV"));
+      //Serial.print(F(" | Mode: ")); Serial.print(isCCMode() ? F("CC") : F("CV"));
       Serial.print(F(" | Corr: ")); Serial.println(autoCorrV);
  
   }
@@ -252,7 +252,7 @@ void setupState(int steps) {
 void displayUpdatLine1() {
   lcd.setCursor(0, 0);
   if (readV < 10.0) lcd.print(' ');
-  lcd.print(readV, 3); lcd.print('V'); // Измеренное напряжение
+  lcd.print(readV, 2); lcd.print('V'); // Измеренное напряжение
   
   lcd.setCursor(9, 0);
   if (readI < 10.0) lcd.print(' ');
@@ -394,7 +394,7 @@ void setDAC() {
 }
 
 // Функция проверки проверки режима СС
-bool isCCMode() {  
+bool isCCMode() {
   float errorV = (setV / 100.0) - readV; // Проверяем, есть ли существенная просадка напряжения   
   float errorI = (setI / 100.0) - readI; // Проверяем, насколько близко ток подошел к установленному
 
