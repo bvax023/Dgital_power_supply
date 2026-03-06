@@ -29,12 +29,13 @@ void menuState(int steps) {
                                        
                     if (conf.corrDacVEn == 0) { 
                         autoCorrV = 0;
-                        setDAC();
+                        setDacV();
                     }
                     break;
          }
          autoCorrV = 0;          // Сброс поправки при изменении калибровок
-         setDAC();               // Сразу применяем к железу
+         setDacV();
+         setDacI();
          blinkState = true;      // Делаем курсор видимым при вращении
          blinkTimer = millis();  // Сбрасываем таймер
          displayUpdatLine2();        

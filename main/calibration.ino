@@ -119,11 +119,18 @@ void corrDacV() {
 
     // Если крутим энкодер                                       
     if (setV != lastSetV || setV == 0) {
-        lastSetV = setV;        
+        lastSetV = setV;
+        stableV = 0;        
         return;         
     }
 
-    if (isCCMode()) {        
+    if (readV < 0.05) { // Если выход бп отключен
+        autoCorrV = 0;               
+        return;         
+    }
+
+    if (isCCMode()) {
+        stableV = 0;        
         return; // Если мы в режиме CC — выходим   
     }   
 
@@ -147,7 +154,7 @@ void corrDacV() {
         autoCorrV = constrain(autoCorrV, -5, 5);
         stableV = 0;        
         lastReadV = -1.0;
-        setDAC();        
+        setDacV();        
     }
 }
 

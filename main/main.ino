@@ -60,6 +60,9 @@ float readI = 0;       // Измеренный ток АЦП
 float readP = 0;       // Мощность (readV * readI)
 int tempC = 35;        // Заглушка температуры
 
+float capacityAh = 0.0;    // Накопленная емкость в Ампер-часах
+bool showAh = false;       // Флаг: что показываем на экране? (false = Ватты, true = Ah)
+
 // Флаг, который АЦП будет "поднимать", когда прочитал свежее напряжение
 bool newVoltageReady = false;
 bool newAmpereReady = false;
@@ -89,7 +92,8 @@ void setup() {
   Serial.begin(115200); 
   lcd.init();       // Инициализация экрана
   lcd.backlight();  
-  Wire.setClock(400000L);   
+  Wire.setClock(400000L);
+  Wire.setWireTimeout(3000, true); // Защита от зависания шины дисплея   
   
   enc.setType(TYPE2); // Тип энкодера (обычно TYPE2 для полушаговых)
 
@@ -122,7 +126,8 @@ void setup() {
     }
     EEPROM.put(0, conf); // Записываем дефолты при первом старте
   }
-  setDAC();     
+  setDacV();
+  setDacI() ;    
   lcd.clear();
   displayUpdatLine2(); // Отрисовка нижней строки 
   displayUpdatLine1();  // Отрисовка верхней строки  
@@ -140,14 +145,17 @@ void loop() {
     steps = encCounter; // Забираем всё, что накопилось
     encCounter = 0;     // Обнуляем буфер
     interrupts();       // Включаем прерывания обратно
-  }
+  }  
 
   // === ОБНОВЛЕНИЕ ДИСПЛЕЯ ===
   if (newVoltageReady || newAmpereReady) { // Обновляем дисплей по флагам готовности замера тока или напряжения 
-      displayUpdatLine1();      
+      displayUpdatLine1();
+      
+      if (newAmpereReady) calculateAh(); // Счетчик ампер часов      
+
       if (newAmpereReady && currentState == STATE_MAIN) { // если на главном экране, считаем ваты
-          readP = readV * readI; // Считаем мощность
-          displayUpdatLine2();   // Выводим Ватты
+          readP = readV * readI; // Считаем мощность    
+          displayUpdatLine2();   // Выводим Ватты или Ah
       }
 
       isCCMode(); // Проверкса СС режима 
@@ -157,8 +165,7 @@ void loop() {
       newAmpereReady = false; 
 
       //Serial.print(F(" | Mode: ")); Serial.print(isCCMode() ? F("CC") : F("CV"));
-      Serial.print(F(" | Corr: ")); Serial.println(autoCorrV);
- 
+      //Serial.print(F(" | Corr: ")); Serial.println(autoCorrV); 
   }
 
   // === ДИСПЕТЧЕР СОСТОЯНИЙ ===
@@ -181,6 +188,21 @@ void mainState(int steps) {
       delay(1000); 
       lcd.clear();    
       displayUpdatLine2();
+      return;
+  }
+
+  // СБРОС СЧЕТЧИКА АМПЕР-ЧАСОВ Поворот влево с зажатой кнопкой
+  if (enc.isLeftH()) {
+      capacityAh = 0.0;      
+      displayUpdatLine2();
+      return;
+  }
+
+  // ПЕРЕКЛЮЧЕНИЕ ВАТТЫ / АМПЕР-ЧАСЫ 
+  if (steps != 0) {
+      if (steps > 0) showAh = true;  // Крутим вправо, показываем Ah
+      else showAh = false;           // Крутим влево, показываем Ватты
+      displayUpdatLine2();           
       return;
   }
 
@@ -213,15 +235,16 @@ void setupState(int steps) {
       
       if (setEdit) {      
         setV += delta;
-        setV = constrain(setV, 0, conf.limitV); // Ограничиваем лимитом из меню             
+        setV = constrain(setV, 0, conf.limitV); // Ограничиваем лимитом из меню
+        setDacV();             
       } else {       
         setI += delta;
-        setI = constrain(setI, 0, conf.limitI); 
-      }        
-      
+        setI = constrain(setI, 0, conf.limitI);
+        setDacI(); 
+      }
+         
       blinkState = true;
-      blinkTimer = millis(); 
-      setDAC();       // Сразу применяем к железу
+      blinkTimer = millis();      
       displayUpdatLine2(); // Обновляем экран
   }
 
@@ -267,11 +290,20 @@ void displayUpdatLine2() {
 
   switch (currentState) {    
     case STATE_MAIN: // --- ГЛАВНЫЙ ЭКРАН ---
-      if (readP < 10.0) lcd.print(' ');
-      if (readP < 100.0) lcd.print(' ');
-      lcd.print(readP, 2); lcd.print('W');
+      // Ватты / Ампер-часы
+      if (showAh) {
+          if (capacityAh < 10.0) lcd.print(' ');
+          lcd.print(capacityAh, 3); 
+          lcd.print(F("Ah"));
+      } else {
+          if (readP < 10.0) lcd.print(' ');
+          if (readP < 100.0) lcd.print(' ');
+          lcd.print(readP, 2); 
+          lcd.print(F("W ")); // Пробел в конце затирает букву 'h' от Ah
+      }
       
-      lcd.print(F("      ")); // Экономим память макросом F()
+      lcd.print(F("    ")); // Экономим память макросом F()
+      lcd.setCursor(13, 1);
       lcd.print(tempC); lcd.print('C');
       break;
 
@@ -367,49 +399,54 @@ void readADS() {
   }
 }
 
-// ================= ОБНОВЛЕНИЕ ЦАП =================
-/*
-void setDAC() {   
-   // Используем калибровки масштаба (dacMax), смещения нуля (dacOffset) и автокоррекцию
-   //int valV = map(setV, 0, conf.dacMaxV, 0, 4095) + conf.dacOffsetV + autoCorrV;
-   //int valI = map(setI, 0, conf.dacMaxI, 0, 4095) + conf.dacOffsetI;
-   
-   // Добавляем половину делителя (conf.dacMax / 2) для правильного математического округления
-   int valV = ((long)setV * 4095L + (conf.dacMaxV / 2)) / conf.dacMaxV + conf.dacOffsetV + autoCorrV;
-   int valI = ((long)setI * 4095L + (conf.dacMaxI / 2)) / conf.dacMaxI + conf.dacOffsetI;
-   
-   // Жестко ограничиваем, чтобы не выйти за пределы 12 бит при отрицательных смещениях
-   dacV.setVoltage(constrain(valV, 0, 4095), false);
-   dacI.setVoltage(constrain(valI, 0, 4095), false);
-}
-*/
-
-// ================= ОБНОВЛЕНИЕ ЦАП =================
-void setDAC() {
-   // setV превращаем в диапазон от 0 до 4095 для 12-битного ЦАП с округлением 
-   int baseValV = ((long)setV * 4095L + (conf.dacMaxV / 2)) / conf.dacMaxV + conf.dacOffsetV;     
-   int index = (setV + 5) / 10; // индекс для tableCorr    
+// ================= ОБНОВЛЕНИЕ ЦАП НАПРЯЖЕНИЯ =================
+void setDacV() {
+  // setV превращаем в диапазон от 0 до 4095 для 12-битного ЦАП с округлением 
+   int baseValV = ((long)setV * 4095L + (conf.dacMaxV / 2)) / conf.dacMaxV + conf.dacOffsetV;
+   int index = (setV + 5) / 10; // индекс для tableCorr  
    int tableCorr = conf.corrTable[index];
    int valV = baseValV + tableCorr + autoCorrV;
-   
-   int valI = ((long)setI * 4095L + (conf.dacMaxI / 2)) / conf.dacMaxI + conf.dacOffsetI;
-   
    dacV.setVoltage(constrain(valV, 0, 4095), false);
+}
+
+// ================= ОБНОВЛЕНИЕ ЦАП ТОКА =================
+void setDacI() {
+  // setV превращаем в диапазон от 0 до 4095 для 12-битного ЦАП с округлением 
+   int valI = ((long)setI * 4095L + (conf.dacMaxI / 2)) / conf.dacMaxI + conf.dacOffsetI;
    dacI.setVoltage(constrain(valI, 0, 4095), false);
 }
 
 // Функция проверки проверки режима СС
 bool isCCMode() {
+  static uint32_t lastTime = 0;
   float errorV = (setV / 100.0) - readV; // Проверяем, есть ли существенная просадка напряжения   
   float errorI = (setI / 100.0) - readI; // Проверяем, насколько близко ток подошел к установленному
 
-  if (errorV > 0.01 && errorI < 0.01) {
+  if (errorV > 0.01 && errorI < 0.01) { // Если физически уперлись в ограничение
+    lastTime = millis(); 
+    return true; 
+  }  
+  
+  if (millis() - lastTime < 1000) { // Если вышли из режима CC,возвращаем true еще 1 секунду
     return true; 
   }
-  return false;
+
+  return false;  
 }
 
+// ================= ПОДСЧЕТ АМПЕР-ЧАСОВ =================
+void calculateAh() {
+    static uint32_t lastAhTimer = 0; 
 
+    uint32_t now = millis();
+    if (lastAhTimer > 0) { 
+        uint32_t deltaMs = now - lastAhTimer; 
+        if (readI >= 0.005) { 
+            capacityAh += (readI * deltaMs) / 3600000.0; 
+        }
+    }
+    lastAhTimer = now; 
+}
 
 // ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ВЫВОДА =================
 // Печать целых чисел со смещением для выравнивания
