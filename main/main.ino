@@ -89,7 +89,7 @@ void enc_isr() {
 
 // ================= СТАРТ =================
 void setup() {
-  Serial.begin(115200); 
+  //Serial.begin(115200); 
   lcd.init();       // Инициализация экрана
   lcd.backlight();  
   Wire.setClock(400000L);
@@ -131,7 +131,7 @@ void setup() {
   lcd.clear();
   displayUpdatLine2(); // Отрисовка нижней строки 
   displayUpdatLine1();  // Отрисовка верхней строки  
-  printCalibrationTable(); // Вывод таблицы корректирвока цап напряжения в serial
+  //printCalibrationTable(); // Вывод таблицы корректирвока цап напряжения в serial
 }
 
 void loop() {  
