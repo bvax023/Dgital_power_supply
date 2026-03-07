@@ -9,8 +9,12 @@
 #define CLK_PIN 2
 #define DT_PIN  3
 #define SW_PIN  4
-#define LCD_ADDR 0x27 // Адрес дисплея (обычно 0x27 или 0x3F)
-#define EEPROM_KEY 58 // Ключ для проверки первого запуска и сброса памяти
+#define BUZZER_PIN 6      // Пин активной пищалки (плюс на пин, минус на GND)
+#define OUT_BTN_PIN  7    // Кнопка (замыкает на GND)
+#define OUT_LED_PIN  8    // Светодиод (через резистор на GND)
+#define OUT_CTRL_PIN 9    // Управление силовой частью (LOW = Вкл)
+#define LCD_ADDR 0x27     // Адрес дисплея (обычно 0x27 или 0x3F)
+#define EEPROM_KEY 58     // Ключ для проверки первого запуска и сброса памяти
 
 // ================= ОБЪЕКТЫ =================
 LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
@@ -80,16 +84,29 @@ volatile int encCounter = 0; // Буфер обычных шагов (запол
 // === [АВТОКОРРЕКЦИЯ] ПЕРЕМЕННЫЕ ===
 int autoCorrV = 0;
 
+uint32_t buzzerOffTime = 0; // Таймер для выключения пищалки
+bool isOutputEnable = false; // Включен ли сейчас выход
+
 // ================= ПРЕРЫВАНИЕ (ISR) =================
 void enc_isr() {
   enc.tick(); // Читаем пины вращения
   if (enc.isRight()) encCounter++; 
-  if (enc.isLeft()) encCounter--;
+  if (enc.isLeft()) encCounter--;  
 }
 
 // ================= СТАРТ =================
 void setup() {
-  //Serial.begin(115200); 
+  Serial.begin(115200);
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW); // Пищалка выключена по умолчанию 
+  // --- Настройка кнопки и выхода ---
+  pinMode(OUT_BTN_PIN, INPUT_PULLUP); // Включаем внутреннюю подтяжку к +5V
+  
+  pinMode(OUT_LED_PIN, OUTPUT);
+  digitalWrite(OUT_LED_PIN, LOW);     // Гасим диод при старте
+  
+  pinMode(OUT_CTRL_PIN, OUTPUT);
+  digitalWrite(OUT_CTRL_PIN, HIGH);   // ВЫКЛЮЧАЕМ ВЫХОД (отпускаем от минуса)
   lcd.init();       // Инициализация экрана
   lcd.backlight();  
   Wire.setClock(400000L);
@@ -135,8 +152,9 @@ void setup() {
 }
 
 void loop() {  
-  enc.tick();    // Опрос кнопки и таймеров энкодера (ОБЯЗАТЕЛЬНО!)
-  readADS();     // Измерение напряжения и тока  
+  enc.tick();     // Опрос кнопки
+  readADS();      // Измерение напряжения и тока
+  handleOutputButton();  
 
   // 2. БЕЗОПАСНОЕ ЧТЕНИЕ ШАГОВ ВРАЩЕНИЯ (Забираем шаги из прерывания один раз за цикл)
   int steps = 0;
@@ -144,8 +162,11 @@ void loop() {
     noInterrupts(); // Останавливаем прерывания на микросекунду
     steps = encCounter; // Забираем всё, что накопилось
     encCounter = 0;     // Обнуляем буфер
-    interrupts();       // Включаем прерывания обратно
-  }  
+    interrupts();       // Включаем прерывания обратно 
+    beep(5);       
+  }
+
+  handleBuzzer(); // Фоновая проверка пищалки  
 
   // === ОБНОВЛЕНИЕ ДИСПЛЕЯ ===
   if (newVoltageReady || newAmpereReady) { // Обновляем дисплей по флагам готовности замера тока или напряжения 
@@ -210,6 +231,7 @@ void mainState(int steps) {
   if (enc.isClick()) { 
       currentState = STATE_SETUP;
       setEdit = true;
+      beep(50);
       blinkTimer = millis();
       blinkState = true;         
       displayUpdatLine2();
@@ -220,6 +242,7 @@ void mainState(int steps) {
   if (enc.isHolded()) { 
       currentState = STATE_SETUP;
       setEdit = false;
+      beep(50);
       blinkTimer = millis();
       blinkState = true;       
       displayUpdatLine2(); 
@@ -252,15 +275,17 @@ void setupState(int steps) {
   if (enc.isClick()) {
       cursorStep++;
       if (cursorStep > 3) cursorStep = 0; 
+      beep(50);
       blinkState = false;
       blinkTimer = millis();    
-      displayUpdatLine2(); 
+      displayUpdatLine2();       
   }
 
   // ВЫХОД НА ГЛАВНЫЙ ЭКРАН: Длинное удержание
   if (enc.isHolded()) {
       currentState = STATE_MAIN;
       cursorStep = 1;
+      beep(50);
       displayUpdatLine2(); 
       return;
   }
@@ -275,6 +300,7 @@ void setupState(int steps) {
 
 // ================= ОТРИСОВКА ВЕРХНЕЙ СТРОКИ =================
 void displayUpdatLine1() {
+  uint32_t timerStart = micros(); // <--- НАЧИНАЕМ ЗАМЕР 
   lcd.setCursor(0, 0);
   if (readV < 10.0) lcd.print(' ');
   lcd.print(readV, 2); lcd.print("V  "); // Измеренное напряжение
@@ -285,22 +311,27 @@ void displayUpdatLine1() {
 }
 
 // ================= ОТРИСОВКА НИЖНЕЙ СТРОКИ =================
-void displayUpdatLine2() {  
+void displayUpdatLine2() { 
   lcd.setCursor(0, 1);
 
   switch (currentState) {    
     case STATE_MAIN: // --- ГЛАВНЫЙ ЭКРАН ---
       // Ватты / Ампер-часы
-      if (showAh) {
-          if (capacityAh < 10.0) lcd.print(' ');
-          lcd.print(capacityAh, 3); 
-          lcd.print(F("Ah"));
+      if (!isOutputEnable) {
+        lcd.print(F("  OFF"));
       } else {
-          if (readP < 10.0) lcd.print(' ');
-          if (readP < 100.0) lcd.print(' ');
-          lcd.print(readP, 2); 
-          lcd.print(F("W ")); // Пробел в конце затирает букву 'h' от Ah
+        if (showAh) {
+            if (capacityAh < 10.0) lcd.print(' ');
+            lcd.print(capacityAh, 3); 
+            lcd.print(F("Ah"));
+        } else {
+            if (readP < 10.0) lcd.print(' ');
+            if (readP < 100.0) lcd.print(' ');
+            lcd.print(readP, 2); 
+            lcd.print(F("W ")); // Пробел в конце затирает букву 'h' от Ah
+        }
       }
+      
       
       lcd.print(F("    ")); // Экономим память макросом F()
       lcd.setCursor(13, 1);
@@ -441,11 +472,53 @@ void calculateAh() {
     uint32_t now = millis();
     if (lastAhTimer > 0) { 
         uint32_t deltaMs = now - lastAhTimer; 
-        if (readI >= 0.005) { 
-            capacityAh += (readI * deltaMs) / 3600000.0; 
+        // Считаем ТОЛЬКО если выход включен и ток больше 5мА
+        if (isOutputEnable && readI >= 0.005) { 
+            capacityAh += (readI * deltaMs) / 3600000.0;
         }
     }
     lastAhTimer = now; 
+}
+
+// ================= НЕБЛОКИРУЮЩИЙ БИПЕР =================
+// Функция активации (по умолчанию пищит 15 мс)
+void beep(uint16_t duration) {
+    digitalWrite(BUZZER_PIN, HIGH);        // Включаем звук
+    buzzerOffTime = millis() + duration;   // Запоминаем время, когда нужно выключить
+}
+
+// Функция фонового обслуживания (вызывать в loop)
+void handleBuzzer() {
+    if (buzzerOffTime > 0 && millis() >= buzzerOffTime) {
+        digitalWrite(BUZZER_PIN, LOW);     // Время вышло - выключаем
+        buzzerOffTime = 0;                 // Сбрасываем таймер
+    }
+}
+
+// ================= ОБРАБОТКА КНОПКИ ВЫХОДА =================
+void handleOutputButton() {
+    static uint32_t btnTimer = 0;
+    static bool lastBtnState = HIGH;
+    
+    bool btnState = digitalRead(OUT_BTN_PIN);
+    
+    // Проверяем нажатие (переход от HIGH к LOW) с антидребезгом 50 мс
+    if (!btnState && lastBtnState && (millis() - btnTimer > 50)) {
+        isOutputEnable = !isOutputEnable; // Инвертируем состояние
+        beep(50); // Делаем приятный звуковой "клик" пищалкой
+        
+        if (isOutputEnable) {
+            // ВКЛЮЧАЕМ
+            digitalWrite(OUT_CTRL_PIN, LOW);  // Подтягиваем к минусу
+            digitalWrite(OUT_LED_PIN, HIGH);  // Зажигаем диод
+        } else {
+            // ВЫКЛЮЧАЕМ
+            digitalWrite(OUT_CTRL_PIN, HIGH); // Отпускаем от минуса
+            digitalWrite(OUT_LED_PIN, LOW);   // Гасим диод            
+        }
+        btnTimer = millis();
+    }
+    lastBtnState = btnState;
 }
 
 // ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ВЫВОДА =================
