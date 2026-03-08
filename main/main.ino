@@ -64,10 +64,11 @@ float readI = 0;          // Измеренный ток АЦП
 float readP = 0;          // Мощность (readV * readI)
 int setEndI = 10;         // Минимальный ток отключения при зарядке
 bool chargeDone = false;  // Заряд окончен
-int tempC = 35;           // Заглушка температуры
 
 float capacityAh = 0.0;    // Накопленная емкость в Ампер-часах
 bool showAh = false;       // Флаг: что показываем на экране? (false = Ватты, true = Ah)
+
+int tempC = 35;           // Заглушка температуры
 
 // Флаг, который АЦП будет "поднимать", когда прочитал свежее напряжение
 bool newVoltageReady = false;
@@ -81,13 +82,12 @@ const int addValue[] = {1000, 100, 10, 1}; // Шаг изменения знач
 uint32_t blinkTimer = 0; // Таймер для мигания активным разрядом
 bool blinkState = true;  // true = текст виден, false = текст скрыт (пробел)
 
-volatile int encCounter = 0; // Буфер обычных шагов (заполняется в прерывании)
-
-// === [АВТОКОРРЕКЦИЯ] ПЕРЕМЕННЫЕ ===
-int autoCorrV = 0;
+int autoCorrV = 0; // Автокоррекция ЦАП напряжения
 
 uint32_t buzzerOffTime = 0; // Таймер для выключения пищалки
 bool isOutputEnable = false; // Включен ли сейчас выход
+
+volatile int encCounter = 0; // Буфер шагов энкодера
 
 // ================= ПРЕРЫВАНИЕ (ISR) =================
 void enc_isr() {
@@ -159,7 +159,7 @@ void loop() {
   handleOutputButton();   // Кнопка выключения выхода бп и светодиод
   checkChargeEnd();       // Отключаем выход при достижении минимального тока при зарядке 
 
-  // 2. БЕЗОПАСНОЕ ЧТЕНИЕ ШАГОВ ВРАЩЕНИЯ (Забираем шаги из прерывания один раз за цикл)
+  // Чтение шагов энкодера (Забираем шаги из прерывания один раз за цикл)
   int steps = 0;
   if (encCounter != 0) {
     noInterrupts(); // Останавливаем прерывания на микросекунду
@@ -177,7 +177,7 @@ void loop() {
       
       if (newAmpereReady) calculateAh(); // Счетчик ампер часов      
 
-      if (newAmpereReady && currentState == STATE_MAIN) { // если на главном экране, считаем ваты
+      if (newAmpereReady && currentState == STATE_MAIN) { // Если на главном экране, считаем ваты
           readP = readV * readI; // Считаем мощность    
           displayUpdatLine2();   // Выводим Ватты или Ah
       }
@@ -253,25 +253,28 @@ void mainState(int steps) {
 // ================= СОСТОЯНИЕ 2: НАСТРОЙКА УСТАВКИ =================
 void setupState(int steps) {  
   // РЕДАКТИРОВАНИЕ ЗНАЧЕНИЯ (Поворот энкодера)
-  if (setEdit == 1 && enc.isRightH()) { // Вход в минимальный ток отключения при зарядке
+  if (setEdit == 1 && enc.isRightH()) { // Вход в настройку минимального тока отключения при зарядке
       setEdit = 2; // Переключаемся на End I
       cursorStep = 1;
       beep(50);
       displayUpdatLine2();
       return;
-  }      
+  }
+
   if (steps != 0) {
       int delta = addValue[cursorStep] * steps; // Умножаем шаги на множитель разряда
       
       if (setEdit == 0) { // Редактирование напряжения      
           setV += delta;
           setV = constrain(setV, 0, conf.limitV); // Ограничиваем лимитом из меню
-          setDacV();             
-      } else if (setEdit == 1) { // Редактирование тока                             
+          setDacV();
+      } 
+      if (setEdit == 1) { // Редактирование тока                             
           setI += delta;
           setI = constrain(setI, 0, conf.limitI);
           setDacI(); 
-      } else if (setEdit == 2) {  // Минимальный ток отключения при зарядке
+      } 
+      if (setEdit == 2) {  // Минимальный ток отключения при зарядке
           setEndI = constrain(setEndI + delta, 0, conf.limitI);
       }
          
@@ -326,25 +329,22 @@ void displayUpdatLine2() {
   switch (currentState) {    
     case STATE_MAIN: // --- ГЛАВНЫЙ ЭКРАН ---
       // Ватты / Ампер-часы
-      if (!isOutputEnable) {
+      if (!isOutputEnable) { // Если выход бп выключан
         lcd.print(F(" OFF "));
-        if (chargeDone) { // Флаг окончания заряда   
-          lcd.print(capacityAh, 3);
+        if (chargeDone) { // Если флаг окончания заряда   
+          lcd.print(capacityAh, 3); // Показываем счетчик ампер часов
           lcd.print(F("Ah"));
-      }
-      } else {
-        if (showAh) {
-            if (capacityAh < 10.0) lcd.print(' ');
-            lcd.print(capacityAh, 3); 
-            lcd.print(F("Ah"));
-        } else {
-            if (readP < 10.0) lcd.print(' ');
-            if (readP < 100.0) lcd.print(' ');
-            lcd.print(readP, 2); 
-            lcd.print(F("W ")); // Пробел в конце затирает букву 'h' от Ah
         }
-      }
-      
+      } else if (showAh) { // Выход бп включен, флаг showAh true
+        if (capacityAh < 10.0) lcd.print(' ');
+          lcd.print(capacityAh, 3); 
+          lcd.print(F("Ah"));
+        } else { // Выход бп включен, флаг showAh false
+        if (readP < 10.0) lcd.print(' ');
+          if (readP < 100.0) lcd.print(' ');
+          lcd.print(readP, 2); 
+          lcd.print(F("W ")); // Пробел в конце затирает букву 'h' от Ah
+        }            
       
       lcd.print(F("    ")); // Экономим память макросом F()
       lcd.setCursor(13, 1);
@@ -355,13 +355,15 @@ void displayUpdatLine2() {
       if (setEdit == 0) {
          lcd.print(F("Set >V:"));
          printFormatted(setV);
-      } else if (setEdit == 1){
+      } 
+      if (setEdit == 1){
          lcd.print(F("Set >I:"));
          printFormatted(setI);
-      } else if (setEdit == 2) {
+      } 
+      if (setEdit == 2) {
         lcd.print(F("End >I:")); // Выводим параметр для ЗУ
         printFormatted(setEndI);
-    }      
+      }      
       lcd.print(F("    ")); // Затираем остатки
       
       // Логика мигания
@@ -521,7 +523,7 @@ void handleOutputButton() {
     // Проверяем нажатие (переход от HIGH к LOW) с антидребезгом 50 мс
     if (!btnState && lastBtnState && (millis() - btnTimer > 50)) {
         isOutputEnable = !isOutputEnable; // Инвертируем состояние
-        beep(50); // Делаем приятный звуковой "клик" пищалкой
+        beep(50);
         
         if (isOutputEnable) {
             // ВКЛЮЧАЕМ            
@@ -540,7 +542,7 @@ void handleOutputButton() {
 
 // Отключаем выход при достижении минимального тока при зарядке
 void checkChargeEnd() { 
-  if (isOutputEnable && showAh && !chargeDone) { // Выход включен, выбран режим счетчика Ампер-часов (showAh == true), Зарядка еще не помечена как оконченная
+  if (!isOutputEnable || !showAh || chargeDone || readI < 0.05) return;  // Выход выключен, не выбран режим счетчика Ампер-часов (showAh == true), зарядка помечена как оконченная, ток меньше 0,05
     
     if (readI < (setEndI / 100.0) && !isCCMode()) { // Блок не в режиме СС, текущий ток readI меньше установленного setEndI      
       static uint32_t endTimer = 0;
@@ -558,8 +560,7 @@ void checkChargeEnd() {
     } else { // Если ток поднялся выше порога или БП ушел в CC режим - сбрасываем таймер
         static uint32_t endTimer = 0;
         endTimer = 0;
-    }
-  }
+    }  
 }
 
 // ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ВЫВОДА =================
