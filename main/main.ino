@@ -205,7 +205,7 @@ void mainState(int steps) {
 
   // СБРОС СЧЕТЧИКА АМПЕР-ЧАСОВ Поворот влево с зажатой кнопкой
   if (enc.isLeftH()) {
-      capacityAh = 0.0;      
+      capacityAh = 0;      
       displayUpdatLine2();
       return;
   }

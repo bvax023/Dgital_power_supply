@@ -179,7 +179,7 @@ void corrDacV() {
         
         autoCorrV = constrain(autoCorrV, -5, 5);
         stableV = 0;        
-        lastReadV = -1.0;
+        lastReadV = -1000;
         setDacV();        
     }
 }
