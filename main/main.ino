@@ -86,6 +86,10 @@ bool isOutputEnable = false; // Включен ли сейчас выход
 
 volatile int encCounter = 0; // Буфер шагов энкодера
 
+// Глобальные переменные для работы меню 
+int menuPage = 0; // Страница меню
+bool editMode = false; // Редактируем параметр true
+
 // ================= ПРЕРЫВАНИЕ (ISR) =================
 void enc_isr() {
   enc.tick(); // Читаем пины вращения
@@ -175,7 +179,7 @@ void loop() {
       if (newAmpereReady) calculateAh(); // Счетчик ампер часов      
 
       if (newAmpereReady && currentState == STATE_MAIN) { // Если на главном экране, считаем ваты
-          readP = readV * readI; // Считаем мощность    
+          readP = (uint32_t)readV * (uint32_t)readI;   
           displayUpdatLine2();   // Выводим Ватты или Ah
       }
 
@@ -514,13 +518,4 @@ void printInt(int val) {
   if (val >= 0) lcd.print(' ');
   lcd.print(val);
   lcd.print("  ");
-}
-
-// ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ВЫВОДА =================
-// Печать целых чисел со смещением для выравнивания
-void printInt(int val) {
-  lcd.setCursor(9, 1);
-  if (val >= 0) lcd.print(' ');
-  lcd.print(val);
-  lcd.print(F("  "));
 }

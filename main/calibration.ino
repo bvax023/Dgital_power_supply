@@ -15,13 +15,12 @@ void runVoltageCalibration() { // Эта функция блокирующая. 
 
     // === ГЛАВНЫЙ ЦИКЛ КАЛИБРОВКИ (Идем шагами по 0.1 Вольта) ===
     for (int i = 1; i <= conf.limitV / 10; i++) {           
-        int stableCount = 0;        // Счетчик стабильности измеренного напряжения (в окно ошибки)
-        int stableV = 0;            // Счетчик стабильности измеренного напряжения
-        float lastReadV = -1.0;     // Переменная для хранения прошлого замера АЦП
+        int stableCount = 0;             // Счетчик стабильности измеренного напряжения (в окно ошибки)
+        int stableV = 0;                 // Счетчик стабильности измеренного напряжения
+        int16_t lastReadV = -1000;        // Переменная для хранения прошлого замера АЦП
         newVoltageReady = false;    
 
-        int setDacV = i * 10; // Напряжение бп
-        float floatDacV = setDacV / 100.0; // int setDacV / 100 что б сравнить с измеренным readV которое float                  
+        int setDacV = i * 10; // Напряжение бп                    
 
         int baseDac = ((long)setDacV * 4095L + (conf.dacMaxV / 2)) / conf.dacMaxV + conf.dacOffsetV; // Значение ЦАП        
        
@@ -48,18 +47,20 @@ void runVoltageCalibration() { // Эта функция блокирующая. 
                 displayUpdatLine1();
 
                 lcd.setCursor(0, 1);
-                lcd.print(floatDacV, 1); lcd.print(F("V ")); 
+                // В setDacV 2 знака после запятой. Выводим 1 знак (1250 -> 12.5)
+                printFormatted(setDacV, 2, 1); 
                 lcd.print(F("Offset:")); lcd.print(currentOffset); lcd.print(F("  "));               
                 
                 // Проверяем стабильность напряжения на выходе 
-                if (abs(readV - lastReadV) > 0.002) stableV = 0; // Если разница больше 0.002 сбрасываем флаг stableV = 0                    
+                if (abs(readV - lastReadV) > 2) stableV = 0; // Если разница больше 0.002 сбрасываем флаг stableV = 0                    
                 else stableV++;  
                             
                 lastReadV = readV; // Обновляем значение для сравнения            
                 if (stableV <= 2) continue; // пропускаем цикл пока напряжение не стабилизируется                                                            
                 
-                float error = floatDacV - readV; // Ошибка между выставленным и измерянным напряжением
-                if (abs(error) <= 0.004) { // Если ошибка меньше                     
+                // Ошибка между выставленным и измерянным напряжением в милливольтах
+                int16_t error = (setDacV * 10) - readV;
+                if (abs(error) <= 4) { // Если ошибка меньше 4 мВ                     
                     stableCount++;   
                     stableV = 0; // Сбрасываем счетчик стабильности измеренного напряжения  
                                   
@@ -67,7 +68,7 @@ void runVoltageCalibration() { // Эта функция блокирующая. 
                         conf.corrTable[i] = currentOffset; // Записываем найденную поправку в массив EEPROM                        
                         break; // Выходим из цикла while. Цикл for перейдет к следующему значению напряжения
                     }
-                } else { // Ошибка больше 0.004               
+                } else { // Ошибка больше 4 мВ               
                     
                     // Делаем шаг ЦАП в нужную сторону
                     if (error > 0) currentOffset++; // Если напряжение меньше цели — прибавляем
@@ -78,7 +79,7 @@ void runVoltageCalibration() { // Эта функция блокирующая. 
 
                     stableCount = 0; // Сбрасываем счетчик попаданий                  
                     stableV = 0; // Сбрасываем счетчик стабильности измеренного напряжения
-                    lastReadV = -1.0;
+                    lastReadV = -1000;
                     newVoltageReady = false; 
                 }
             }
@@ -101,10 +102,13 @@ void printCalibrationTable() {
     Serial.println(F("Уставка (В)\tПоправка (шаги ЦАП)"));
     
     for (int i = 0; i <= conf.limitV / 10; i++) {
-        float volt = i * 0.1; // Переводим индекс в вольты
+        // Задание напряжения в десятых долях (выводим целые и десятые через точку)
+        int voltTenths = i;
         
-        Serial.print(volt, 1); // Печатаем напряжение с 1 знаком после запятой
-        Serial.print(F("\t\t")); // Знак табуляции для ровных столбцов
+        Serial.print(voltTenths / 10);
+        Serial.print('.');
+        Serial.print(voltTenths % 10);
+        Serial.print(F("\t\t"));
         Serial.println(conf.corrTable[i]); // Печатаем поправку из массива
     }    
 }
@@ -112,8 +116,8 @@ void printCalibrationTable() {
 // === АВТОКОРРЕКЦИЯ ЦАП ===
 void corrDacV() {
     if (conf.corrDacVEn == 0) return;    
-    float static lastReadV = -1.0;     // Переменная для хранения прошлого замера АЦП
-    int static stableV = 0;         // Счетчик стабильности измеренного напряжения    
+    static int16_t lastReadV = -1000;     // Переменная для хранения прошлого замера АЦП
+    static int stableV = 0;         // Счетчик стабильности измеренного напряжения    
     static uint32_t ccTimer = 0;
     static int lastSetV = -1;      
 
@@ -124,7 +128,7 @@ void corrDacV() {
         return;         
     }
 
-    if (readV < 0.05) { // Если выход бп отключен
+    if (readV < 50) { // Если выход бп отключен, напряжение меньше 50 мВ
         autoCorrV = 0;               
         return;         
     }
@@ -135,7 +139,7 @@ void corrDacV() {
     }   
 
     // Проверяем стабильность напряжения на выходе     
-    if (abs(readV - lastReadV) > 0.002) stableV = 0; // Если разница больше 0.002 сбрасываем флаг stableV = 0                    
+    if (abs(readV - lastReadV) > 2) stableV = 0; // Если разница больше 2 мВ сбрасываем флаг stableV = 0                    
     else stableV++;  
                              
     lastReadV = readV; // Обновляем значение для сравнения                
@@ -143,9 +147,10 @@ void corrDacV() {
 
     stableV = constrain(stableV, 0, 2); // Ограничиваем переменную 
 
-    float error = (setV / 100.0) - readV; // Ошибка между заданным и измерянным 
+    // Ошибка между заданным и измеренным в мВ
+    int16_t error = (setV * 10) - readV;
 
-    if (abs(error) <= 0.005) {                             
+    if (abs(error) <= 5) {                             
         return;        
     } else {
         if (error > 0) autoCorrV++; // Напряжение ниже, добавляем шаг ЦАП
