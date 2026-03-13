@@ -397,19 +397,22 @@ void setDacI() {
    dacI.setVoltage(constrain(valI, 0, 4095), false);
 }
 
-// Функция проверки проверки режима СС
+// Функция проверки режима СС
 bool isCCMode() {
   static uint32_t lastTime = 0;
-  float errorV = (setV / 100.0) - readV; // Проверяем, есть ли существенная просадка напряжения   
-  float errorI = (setI / 100.0) - readI; // Проверяем, насколько близко ток подошел к установленному
+  
+  // Уставка хранится в сотых (1200), а измерение в тысячных (12000). Уравниваем:
+  int16_t errorV = (setV * 10) - readV; 
+  int16_t errorI = (setI * 10) - readI;
 
-  if (errorV > 0.01 && errorI < 0.01) { // Если физически уперлись в ограничение
-    lastTime = millis(); 
+  // Если просадка напряжения больше 10 мВ (0.01В), а ток близок к уставке (разница меньше 10 мА)
+  if (errorV > 10 && errorI < 10) { 
+    lastTime = millis();
     return true; 
   }  
   
-  if (millis() - lastTime < 1000) { // Если вышли из режима CC,возвращаем true еще 1 секунду
-    return true; 
+  if (millis() - lastTime < 1000) { // Если вышли из режима CC, возвращаем true еще 1 секунду
+    return true;
   }
 
   return false;  
@@ -417,17 +420,25 @@ bool isCCMode() {
 
 // ================= ПОДСЧЕТ АМПЕР-ЧАСОВ =================
 void calculateAh() {
-    static uint32_t lastAhTimer = 0; 
-
+    static uint32_t lastAhTimer = 0;
+    static uint32_t msAccumulator = 0; // Копилка микро-порций тока
+    
     uint32_t now = millis();
     if (lastAhTimer > 0) { 
-        uint32_t deltaMs = now - lastAhTimer; 
+        uint32_t deltaMs = now - lastAhTimer;
+        
         // Считаем ТОЛЬКО если выход включен и ток больше 5мА
-        if (isOutputEnable && readI >= 0.005) { 
-            capacityAh += (readI * deltaMs) / 3600000.0;
+        if (isOutputEnable && readI >= 5) { 
+            msAccumulator += (uint32_t)readI * deltaMs;
+            
+            // Если накопили достаточно для 1 миллиампер-часа (1 мА * 3600 с * 1000 мс)
+            while (msAccumulator >= 3600000UL) {
+                msAccumulator -= 3600000UL;
+                capacityAh++; // Добавляем 1 мАч в основную переменную
+            }
         }
     }
-    lastAhTimer = now; 
+    lastAhTimer = now;
 }
 
 // ================= НЕБЛОКИРУЮЩИЙ БИПЕР =================
@@ -474,9 +485,10 @@ void handleOutputButton() {
 
 // Отключаем выход при достижении минимального тока при зарядке
 void checkChargeEnd() { 
-  if (!isOutputEnable || !showAh || chargeDone || readI < 0.05) return;  // Выход выключен, не выбран режим счетчика Ампер-часов (showAh == true), зарядка помечена как оконченная, ток меньше 0,05
+  if (!isOutputEnable || !showAh || chargeDone || readI < 50) return;  // Выход выключен, не выбран режим счетчика Ампер-часов (showAh == true), зарядка помечена как оконченная, ток меньше 50мА
     
-    if (readI < (setEndI / 100.0) && !isCCMode()) { // Блок не в режиме СС, текущий ток readI меньше установленного setEndI      
+    // setEndI в сотых долях (умножаем на 10 для перевода в мА)
+    if (readI < (setEndI * 10) && !isCCMode()) { // Блок не в режиме СС, текущий ток readI меньше установленного setEndI      
       static uint32_t endTimer = 0;
       if (endTimer == 0) endTimer = millis(); // Запускаем таймер      
       

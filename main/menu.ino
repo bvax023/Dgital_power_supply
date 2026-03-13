@@ -17,10 +17,10 @@ void menuState(int steps) {
          switch (menuPage) {          
             case 0: conf.limitV += steps * 10; break;      
             case 1: conf.limitI += steps * 10; break;      
-            case 2: conf.corrV += steps * 0.0001; break;
+            case 2: conf.corrV += steps; break;
             case 3: conf.dacOffsetV += steps; break;       
             case 4: conf.dacMaxV += steps; break;          
-            case 5: conf.corrI += steps * 0.0001; break;
+            case 5: conf.corrI += steps; break;
             case 6: conf.dacOffsetI += steps; break;       
             case 7: conf.dacMaxI += steps; break;
             case 8: runVoltageCalibration(); lcd.clear(); break; // Эта функция блокирующая. Пока она работает, главный цикл loop() стоит на паузе
