@@ -7,9 +7,10 @@ void runVoltageCalibration() { // Эта функция блокирующая. 
     lcd.print(F("Table corr DAC V"));
     lcd.setCursor(0, 1);
     lcd.print(F("Click to Exit"));
-    delay(1500); 
+    delay(1500);
+    digitalWrite(BUZZER_PIN, LOW);     // Выключаем пищалку
     lcd.clear(); 
-    int currentOffset = 0; // Колицество шагов ЦАП для калибровки  
+    int currentOffset = 0; // Колицество шагов ЦАП для калибровки
 
     readADS();  // ОПРОС АЦП (Вызываем вручную, так как главный loop() заблокирован)  
 
@@ -43,12 +44,14 @@ void runVoltageCalibration() { // Эта функция блокирующая. 
             // ЕСЛИ ПОЛУЧИЛИ НОВЫЙ ЗАМЕР ОТ АЦП
             if (newVoltageReady) {
                 newVoltageReady = false; 
-                
+          
                 displayUpdatLine1();
 
-                lcd.setCursor(0, 1);
+                lcd.setCursor(1, 1);
                 // В setDacV 2 знака после запятой. Выводим 1 знак (1250 -> 12.5)
-                printFormatted(setDacV, 2, 1); 
+                printFormatted(setDacV, 2, 1);                
+                lcd.print(F("V"));
+                lcd.setCursor(6, 1); 
                 lcd.print(F("Offset:")); lcd.print(currentOffset); lcd.print(F("  "));               
                 
                 // Проверяем стабильность напряжения на выходе 
@@ -119,7 +122,16 @@ void corrDacV() {
     static int16_t lastReadV = -1000;     // Переменная для хранения прошлого замера АЦП
     static int stableV = 0;         // Счетчик стабильности измеренного напряжения    
     static uint32_t ccTimer = 0;
-    static int lastSetV = -1;      
+    static int lastSetV = -1;
+
+    // --- ОТКЛЮЧЕНИЕ В СЕРВИСНОМ МЕНЮ ---   
+    if (currentState == STATE_MENU) {
+        if (autoCorrV != 0) {
+            autoCorrV = 0;
+            setDacV(); // Применяем чистое напряжение без корректировок
+        }
+        return; // Выходим и больше ничего не делаем
+    }      
 
     // Если крутим энкодер                                       
     if (setV != lastSetV || setV == 0) {

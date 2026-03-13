@@ -1,8 +1,12 @@
 // ================= ОТРИСОВКА ВЕРХНЕЙ СТРОКИ =================
 void displayUpdatLine1() {  
   lcd.setCursor(0, 0);  
-  if (readV < 10000) lcd.print(' '); // Напряжение меньше 10 Вольт (10000 мВ) добавляем пробел  
-  printFormatted(readV, 3, 2); // В readV заложено 3 знака после запятой 10000мВ. Хотим вывести 2 знака (округление)
+  if (readV < 10000) lcd.print(' '); // Напряжение меньше 10 Вольт (10000 мВ) добавляем пробел
+  if (currentState == STATE_MENU) { 
+      printFormatted(readV, 3, 3); // В readV заложено 3 знака после запятой 10000мВ. Хотим вывести 3 знака 
+  } else {
+      printFormatted(readV, 3, 2); // В readV заложено 3 знака после запятой 10000мВ. Хотим вывести 2 знака (округление)
+  } 
   lcd.print(F("V  "));
   
   lcd.setCursor(9, 0);  
@@ -49,12 +53,12 @@ void displayUpdatLine2() {
       } 
       if (setEdit == 1){
          lcd.print(F("Set >I:"));
-         if (setI < 100) lcd.print('0');
+         if (setI < 1000) lcd.print('0');
          printFormatted(setI, 2, 2);
       } 
       if (setEdit == 2) {
         lcd.print(F("End >I:")); // Выводим параметр для ЗУ
-        if (setEndI < 100) lcd.print('0');
+        if (setEndI < 1000) lcd.print('0');
         printFormatted(setEndI, 2, 2);
       }      
       lcd.print(F("    ")); // Затираем остатки
@@ -99,9 +103,11 @@ void printFormatted(uint32_t val, uint8_t inDec, uint8_t outDec) {
   if (inDec > outDec) {
     uint8_t diff = inDec - outDec;
     uint32_t div = 1;
-    for (uint8_t i = 0; i < diff; i++) div *= 10;
+    for (uint8_t i = 0; i < diff; i++) {
+        div *= 10;
+    }
     
-    // Прибавляем половину делителя и отсекаем лишнее
+    // Прибавляем половину делителя для округления
     val = (val + (div / 2)) / div; 
   } 
 

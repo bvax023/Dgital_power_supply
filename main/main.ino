@@ -187,7 +187,9 @@ void loop() {
       corrDacV(); // Автокоррекция ЦАП напряжения 
 
       newVoltageReady = false;
-      newAmpereReady = false;           
+      newAmpereReady = false;
+
+      //Serial.print(F("autoCorrV: ")); Serial.println(autoCorrV);           
   }
 
   // === ДИСПЕТЧЕР СОСТОЯНИЙ ===
@@ -314,17 +316,12 @@ void setupState(int steps) {
 // ================= ЧТЕНИЕ АЦП (ADS1115) =================
 void readADS() {
   static uint8_t adcStep = 0;
-  static uint32_t adcTimer = 0;  // Локальный таймер для АЦП  
-  
-  const uint32_t CONV_TIME = 135;           // 8 SPS = 125ms. Добавляем 10ms запаса
-  //const float ADCV_STEP_MV = 0.000125;      // Шаг АЦП напряжения при усилении 1x
-  //const float ADCI_STEP_MV = 0.0000078125;  // Шаг АЦП тока при усилении 16x
-  //const float V_RES_DIVIDER = 7.8;          // Коэффициент резисторного делителя напряжения
-  //const float I_RES_DIVIDER = 3.2;        // Коэффициент резисторного делителя тока
+  static uint32_t adcTimer = 0;     // Локальный таймер для АЦП  
+  const uint32_t CONV_TIME = 135;   // 8 SPS = 125ms. Добавляем 10ms запаса
 
   switch (adcStep) {    
     case 0: // --- ЗАМЕР НАПРЯЖЕНИЯ (A0-A1) ---
-      ads.setGain(GAIN_ONE);      
+      ads.setGain(GAIN_ONE); // +/-4.096V range      
       ads.startADCReading(ADS1X15_REG_CONFIG_MUX_DIFF_0_1, false);      
       adcTimer = millis();
       adcStep = 1;
@@ -333,26 +330,25 @@ void readADS() {
     case 1: // Ждем по таймеру и читаем напряжение      
       if (millis() - adcTimer >= CONV_TIME) { // Ждем по таймеру и читаем напряжение 
         int16_t rawV = ads.getLastConversionResults();
-        //float pinV = rawV * ADCV_STEP_MV; // Напряжение на ножке АЦП        
-        //readV = (pinV * V_RES_DIVIDER * conf.corrV);
-
+        if (rawV < 0) rawV = 0; 
+        
         // Математика: 1 бит = 0.125 мВ. Резисторный делитель = 7.8. 
         // 0.125 * 7.8 = 0.975      
         // Умножаем на 975, прибавляем 50 (для округления) и делим на 100
         uint32_t pinV = (rawV * 975UL + 50UL) / 100UL; 
         
         // Умножаем на коррекцию, прибавляем 50000 (для округления) и делим на 100000
-        readV = (pinV * conf.corrV + 50000UL) / 100000UL; 
+        readV = (pinV * conf.corrV + 50000UL) / 100000UL;                             
+        newVoltageReady = true; // Флаг новых данных
 
-        if (readV < 0) readV = 0;               
-        newVoltageReady = true; // флаг новых данных                          
+        //Serial.print(F("readV: ")); Serial.println(readV);
 
-        adcStep = 2; // Идем мерить ток       
+        adcStep = 2; // Идем измерять ток       
       }
       break;
     
     case 2: // --- ЗАМЕР ТОКА (A2-A3) ---
-      ads.setGain(GAIN_SIXTEEN); 
+      ads.setGain(GAIN_SIXTEEN); // +/-0.256V range 
       ads.startADCReading(ADS1X15_REG_CONFIG_MUX_DIFF_2_3, false);
       adcTimer = millis();
       adcStep = 3;
@@ -360,23 +356,18 @@ void readADS() {
 
     case 3: 
       if (millis() - adcTimer >= CONV_TIME) {
-        int16_t rawI = ads.getLastConversionResults();                     
-        //float pinI_mV = rawI * ADCI_STEP_MV;        
-        //readI = (pinI_mV / 0.025) * conf.corrI; // Делим на сопротивление шунта 0.025 Ом и применяем калибровку
+        int16_t rawI = ads.getLastConversionResults();        
+        if (rawI < 0) rawI = 0;        
 
         // Шаг ацп 0.0078125 мВ / 0.025 Ом = 0.3125 мА 
         // Умножаем на 3125, прибавляем 500 (для округления) и делим на 1000
-        uint32_t pinI = (abs(rawI) * 3125UL + 500UL) / 1000UL;
-        
-        // Калибруем и делим на 100 000, чтобы получить мА
-        // Добавляем 50000UL для округления
-        readI = (pinI * conf.corrI + 50000UL) / 100000UL;
+        uint32_t pinI = (abs(rawI) * 3125UL + 500UL) / 1000UL;        
 
-        if (readI < 0) readI = 0;      
-        newAmpereReady = true; // флаг новых данных        
+        // Умножаем на коррекцию, прибавляем 50000 (для округления) и делим на 100000
+        readI = (pinI * conf.corrI + 50000UL) / 100000UL;              
+        newAmpereReady = true; // флаг новых данных
 
-        //Serial.print(F("rawI: ")); Serial.println(rawI);
-        //Serial.print(F("Int1: ")); Serial.println(a);
+        //Serial.print(F("readI: ")); Serial.println(readI);       
 
         adcStep = 0;  // Начинаем цикл опроса заново
       }
