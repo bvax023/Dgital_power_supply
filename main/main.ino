@@ -29,8 +29,8 @@ Adafruit_ADS1115 ads;
 // ================= СТРУКТУРА НАСТРОЕК в EEPROM =================
 struct Settings {
   byte key;           // Ячейка для хранения ключа первого запуска
-  float corrV;        // Ацп напряжение
-  float corrI;        // Ацп ток
+  uint16_t corrV;        // Ацп напряжение
+  uint16_t corrI;        // Ацп ток
   int dacMaxV;        // Корректировка ЦАП напряжения в конце диапазона
   int dacOffsetV;     // Смещение нуля ЦАП напряжения (в битах АЦП)
   int dacMaxI;        // Корректировка ЦАП тока в конце диапазона
@@ -56,8 +56,8 @@ int menuPage = 0;
 bool editMode = false; // Флаг: мы листаем пункты (false) или меняем значение (true)
 
 // ================= ПЕРЕМЕННЫЕ =================
-int setV = 1200;       // Уставка ЦАП Напряжения (12.00 В)
-int setI = 100;        // Уставка ЦАП Тока (1.00 А)
+uint16_t setV = 1200;       // Уставка ЦАП Напряжения (12.00 В)
+uint16_t setI = 100;        // Уставка ЦАП Тока (1.00 А)
 
 uint16_t readV = 0;       // Измеренное напряжение АЦП в миливольтах 12000В
 uint16_t readI = 0;       // Измеренный ток АЦП в миллиамперах 1000А
@@ -130,8 +130,8 @@ void setup() {
   EEPROM.get(0, conf);
   if (conf.key != EEPROM_KEY) {
     conf.key = EEPROM_KEY;
-    conf.corrV = 0.9910;
-    conf.corrI = 1.0063;
+    conf.corrV = 10078;
+    conf.corrI = 9985;
     conf.dacMaxV = 3126;
     conf.dacOffsetV = 0;
     conf.dacMaxI = 1062; 
