@@ -1,12 +1,15 @@
 // ================= ОТРИСОВКА ВЕРХНЕЙ СТРОКИ =================
 void displayUpdatLine1() {  
   lcd.setCursor(0, 0);  
-  if (readV < 10000) lcd.print(' '); // Напряжение меньше 10 Вольт (10000 мВ) добавляем пробел
   if (currentState == STATE_MENU) { 
-      printFormatted(readV, 3, 3); // В readV заложено 3 знака после запятой 10000мВ. Хотим вывести 3 знака 
+      // В меню выводим 3 знака, округления нет. Порог ровно 10 В.
+      if (readV < 10000) lcd.print(' ');
+      printFormatted(readV, 3, 3); // В readV заложено 3 знака после запятой 10000мВ. Хотим вывести 3 знака
   } else {
-      printFormatted(readV, 3, 2); // В readV заложено 3 знака после запятой 10000мВ. Хотим вывести 2 знака (округление)
-  } 
+      // Во всех остальных режимах выводим 2 знака. 9.995 В округлится до 10.00 В.
+      if (readV < 9995) lcd.print(' ');
+      printFormatted(readV, 3, 2); // В readV заложено 3 знака после запятой 10000мВ. Хотим вывести 2 знака (округление) 
+  }  
   lcd.print(F("V  "));
   
   lcd.setCursor(9, 0);  
@@ -32,10 +35,11 @@ void displayUpdatLine2() {
         if (capacityAh < 10000) lcd.print(' ');
         printFormatted(capacityAh, 3, 3); 
         lcd.print(F("Ah"));
-      } else { // Выход бп включен, флаг showAh false
-        // Мощность в микроВаттах (6 знаков)
-        if (readP < 10000000UL) lcd.print(' ');
-        if (readP < 100000000UL) lcd.print(' ');
+      } else { // Выход бп включен, флаг showAh false        
+        // 9995000 округлится до 10.00 Вт
+        if (readP < 9995000UL) lcd.print(' ');
+        // 99995000 округлится до 100.00 Вт
+        if (readP < 99995000UL) lcd.print(' ');        
         printFormatted(readP, 6, 2); // Из 6 знаков выводим 2 (сотые доли Ватта)
         lcd.print(F("W ")); // Пробел в конце затирает букву 'h' от Ah
       }            
