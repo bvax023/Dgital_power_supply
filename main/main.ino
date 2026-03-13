@@ -29,8 +29,8 @@ Adafruit_ADS1115 ads;
 // ================= СТРУКТУРА НАСТРОЕК в EEPROM =================
 struct Settings {
   byte key;           // Ячейка для хранения ключа первого запуска
-  uint16_t corrV;        // Ацп напряжение
-  uint16_t corrI;        // Ацп ток
+  int16_t corrV;        // Ацп напряжение
+  int16_t corrI;        // Ацп ток
   int dacMaxV;        // Корректировка ЦАП напряжения в конце диапазона
   int dacOffsetV;     // Смещение нуля ЦАП напряжения (в битах АЦП)
   int dacMaxI;        // Корректировка ЦАП тока в конце диапазона
@@ -51,22 +51,19 @@ enum SystemState {
 };
 SystemState currentState = STATE_MAIN; // При включении мы на главном экране
 
-// Глобальные переменные для работы меню
-int menuPage = 0; 
-bool editMode = false; // Флаг: мы листаем пункты (false) или меняем значение (true)
-
 // ================= ПЕРЕМЕННЫЕ =================
-uint16_t setV = 1200;       // Уставка ЦАП Напряжения (12.00 В)
-uint16_t setI = 100;        // Уставка ЦАП Тока (1.00 А)
+int16_t setV = 1200;       // Задание напряжения ЦАП (в сотых: 12.00 В)
+int16_t setI = 100;        // Задание тока ЦАП (в сотых: 1.00 А)
 
-uint16_t readV = 0;       // Измеренное напряжение АЦП в миливольтах 12000В
-uint16_t readI = 0;       // Измеренный ток АЦП в миллиамперах 1000А
-float readP = 0;          // Мощность (readV * readI)
-int setEndI = 10;         // Минимальный ток отключения при зарядке
-bool chargeDone = false;  // Заряд окончен
+int16_t readV = 0;         // Измеренное напряжение АЦП в милливольтах (12000 мВ)
+int16_t readI = 0;         // Измеренный ток АЦП в миллиамперах (1000 мА)
 
-float capacityAh = 0.0;    // Накопленная емкость в Ампер-часах
-bool showAh = false;       // Флаг: что показываем на экране? (false = Ватты, true = Ah)
+uint32_t readP = 0;        // Мощность в микроВаттах 
+int16_t setEndI = 10;          // Минимальный ток отключения при зарядке
+bool chargeDone = false;   // Заряд окончен
+
+uint32_t capacityAh = 0;   // Накопленная емкость в миллиампер-часах 
+bool showAh = false;       // Флаг: что показываем на экране (false = Ватты, true = Ah)
 
 int tempC = 35;           // Заглушка температуры
 
@@ -507,19 +504,11 @@ void printInt(int val) {
   lcd.print("  ");
 }
 
-// Печать float со смещением для выравнивания
-void printVal(float val, byte prec) {
+// ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ВЫВОДА =================
+// Печать целых чисел со смещением для выравнивания
+void printInt(int val) {
   lcd.setCursor(9, 1);
-  lcd.print(val, prec);
-}
-
-// Форматированный вывод уставок (1234 -> 12.34)
-void printFormatted(int val) {  
-  if (val < 1000) lcd.print('0'); // Ведущий ноль
-  int whole  = val / 100;
-  int frac = val - (whole * 100);
-  
-  lcd.print(whole); lcd.print('.');
-  if (frac < 10) lcd.print('0');  // Ноль перед дробной частью (.05)
-  lcd.print(frac);
+  if (val >= 0) lcd.print(' ');
+  lcd.print(val);
+  lcd.print(F("  "));
 }
