@@ -1,8 +1,6 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <GyverEncoder.h>
-#include <Adafruit_MCP4725.h>
-#include <Adafruit_ADS1X15.h>
 #include <EEPROM.h> // Библиотека для работы с энергонезависимой памятью
 
 // ================= НАСТРОЙКИ ПИНОВ =================
@@ -20,11 +18,7 @@
 LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
 
 // СОЗДАЕМ ОДИН ОБЪЕКТ (Сразу с пином кнопки!)
-Encoder enc(CLK_PIN, DT_PIN, SW_PIN); 
-
-Adafruit_MCP4725 dacV;
-Adafruit_MCP4725 dacI;
-Adafruit_ADS1115 ads;
+Encoder enc(CLK_PIN, DT_PIN, SW_PIN);
 
 // ================= СТРУКТУРА НАСТРОЕК в EEPROM =================
 struct Settings {
@@ -71,15 +65,15 @@ int tempC = 35;           // Заглушка температуры
 bool newVoltageReady = false;
 bool newAmpereReady = false;
 
-int cursorStep = 1;    // Для установки напряжения или тока, 0 - десятки, 1 - едииницы, 2 - десятые, 3 - сотые
-int setEdit = 0;    // 0 - Напряжение, 1 - Ток, 2 - Минимальный ток отключения при зарядке
+int8_t cursorStep = 1;    // Для установки напряжения или тока, 0 - десятки, 1 - едииницы, 2 - десятые, 3 - сотые
+int8_t setEdit = 0;    // 0 - Напряжение, 1 - Ток, 2 - Минимальный ток отключения при зарядке
 const uint8_t dPos[] = {7, 8, 10, 11}; // Координаты X для каждой цифры при мигании, в зависимости от cursorStep
 const int addValue[] = {1000, 100, 10, 1}; // Шаг изменения значения при повороте энкодера, в зависимости от cursorStep
 
 uint32_t blinkTimer = 0; // Таймер для мигания активным разрядом
 bool blinkState = true;  // true = текст виден, false = текст скрыт (пробел)
 
-int autoCorrV = 0; // Автокоррекция ЦАП напряжения
+int8_t autoCorrV = 0; // Автокоррекция ЦАП напряжения
 
 uint32_t buzzerOffTime = 0; // Таймер для выключения пищалки
 bool isOutputEnable = false; // Включен ли сейчас выход
@@ -87,7 +81,7 @@ bool isOutputEnable = false; // Включен ли сейчас выход
 volatile int encCounter = 0; // Буфер шагов энкодера
 
 // Глобальные переменные для работы меню 
-int menuPage = 0; // Страница меню
+int8_t menuPage = 0; // Страница меню
 bool editMode = false; // Редактируем параметр true
 
 // ================= ПРЕРЫВАНИЕ (ISR) =================
@@ -99,7 +93,7 @@ void enc_isr() {
 
 // ================= СТАРТ =================
 void setup() {
-  Serial.begin(115200);
+  //Serial.begin(115200);
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW); // Пищалка выключена по умолчанию 
   // --- Настройка кнопки и выхода ---
@@ -120,12 +114,6 @@ void setup() {
   // Настройка прерываний только на пины вращения
   attachInterrupt(digitalPinToInterrupt(CLK_PIN), enc_isr, CHANGE);
   attachInterrupt(digitalPinToInterrupt(DT_PIN), enc_isr, CHANGE);
-
-  // Инициализация железа
-  dacV.begin(0x60);
-  dacI.begin(0x61); 
-  ads.begin();  
-  ads.setDataRate(RATE_ADS1115_8SPS); // Скорость опроса 
 
   // Загрузка настроек
   EEPROM.get(0, conf);
@@ -313,6 +301,24 @@ void setupState(int steps) {
   }
 }
 
+// Вспомогательная функция для настройки АЦП
+void requestADS(uint16_t config) {
+    Wire.beginTransmission(0x48); // Адрес ADS1115 по умолчанию
+    Wire.write(0x01);             // Выбираем регистр конфигурации
+    Wire.write(config >> 8);      // Отправляем старший байт
+    Wire.write(config & 0xFF);    // Отправляем младший байт
+    Wire.endTransmission();
+}
+
+// Вспомогательная функция для чтения результата
+int16_t readADSResult() {
+    Wire.beginTransmission(0x48);
+    Wire.write(0x00);             // Выбираем регистр данных
+    Wire.endTransmission();
+    Wire.requestFrom(0x48, 2);    // Запрашиваем 2 байта
+    return (Wire.read() << 8) | Wire.read();
+}
+
 // ================= ЧТЕНИЕ АЦП (ADS1115) =================
 void readADS() {
   static uint8_t adcStep = 0;
@@ -321,15 +327,15 @@ void readADS() {
 
   switch (adcStep) {    
     case 0: // --- ЗАМЕР НАПРЯЖЕНИЯ (A0-A1) ---
-      ads.setGain(GAIN_ONE); // +/-4.096V range      
-      ads.startADCReading(ADS1X15_REG_CONFIG_MUX_DIFF_0_1, false);      
+      // 0x8303 означает: AIN0-AIN1, +/-4.096V, Single-shot, 8 SPS
+      requestADS(0x8303);     
       adcTimer = millis();
       adcStep = 1;
       break;
 
     case 1: // Ждем по таймеру и читаем напряжение      
       if (millis() - adcTimer >= CONV_TIME) { // Ждем по таймеру и читаем напряжение 
-        int16_t rawV = ads.getLastConversionResults();
+        int16_t rawV = readADSResult();
         if (rawV < 0) rawV = 0; 
         
         // Математика: 1 бит = 0.125 мВ. Резисторный делитель = 7.8. 
@@ -348,15 +354,15 @@ void readADS() {
       break;
     
     case 2: // --- ЗАМЕР ТОКА (A2-A3) ---
-      ads.setGain(GAIN_SIXTEEN); // +/-0.256V range 
-      ads.startADCReading(ADS1X15_REG_CONFIG_MUX_DIFF_2_3, false);
+      // 0xBB03 означает: AIN2-AIN3, +/-0.256V, Single-shot, 8 SPS
+      requestADS(0xBB03);
       adcTimer = millis();
       adcStep = 3;
       break;
 
     case 3: 
       if (millis() - adcTimer >= CONV_TIME) {
-        int16_t rawI = ads.getLastConversionResults();        
+        int16_t rawI = readADSResult();        
         if (rawI < 0) rawI = 0;        
 
         // Шаг ацп 0.0078125 мВ / 0.025 Ом = 0.3125 мА 
@@ -382,14 +388,24 @@ void setDacV() {
    int index = (setV + 5) / 10; // индекс для tableCorr  
    int tableCorr = conf.corrTable[index];
    int valV = baseValV + tableCorr + autoCorrV;
-   dacV.setVoltage(constrain(valV, 0, 4095), false);
+   valV = constrain(valV, 0, 4095); // Ограничиваем значение 12 битами
+
+   Wire.beginTransmission(0x60); // Адрес ЦАП напряжения
+   Wire.write((valV >> 8) & 0x0F); // 4 старших бита данных
+   Wire.write(valV & 0xFF);        // 8 младших бит
+   Wire.endTransmission();   
 }
 
 // ================= ОБНОВЛЕНИЕ ЦАП ТОКА =================
 void setDacI() {
   // setV превращаем в диапазон от 0 до 4095 для 12-битного ЦАП с округлением 
    int valI = ((long)setI * 4095L + (conf.dacMaxI / 2)) / conf.dacMaxI + conf.dacOffsetI;
-   dacI.setVoltage(constrain(valI, 0, 4095), false);
+   valI = constrain(valI, 0, 4095);
+
+   Wire.beginTransmission(0x61); // Адрес ЦАП тока
+   Wire.write((valI >> 8) & 0x0F); 
+   Wire.write(valI & 0xFF);
+   Wire.endTransmission();   
 }
 
 // Функция проверки режима СС

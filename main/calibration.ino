@@ -23,9 +23,9 @@ void runVoltageCalibration() { // Эта функция блокирующая. 
 
         int setDacV = i * 10; // Напряжение бп                    
 
-        int baseDac = ((long)setDacV * 4095L + (conf.dacMaxV / 2)) / conf.dacMaxV + conf.dacOffsetV; // Значение ЦАП        
-       
-        dacV.setVoltage(constrain(baseDac + currentOffset, 0, 4095), false); // Задаем напряжение на ЦАП     
+        int baseDac = ((long)setDacV * 4095L + (conf.dacMaxV / 2)) / conf.dacMaxV + conf.dacOffsetV; // Значение ЦАП       
+        
+        writeDacV_Raw(baseDac + currentOffset); // Задаем напряжение на ЦАП            
 
         // Крутимся здесь, пока не найдем значение currentOffset
         while (true) {          
@@ -77,8 +77,8 @@ void runVoltageCalibration() { // Эта функция блокирующая. 
                     if (error > 0) currentOffset++; // Если напряжение меньше цели — прибавляем
                     else currentOffset--;           // Если больше — убавляем
                     
-                    currentOffset = constrain(currentOffset, -15, 15); // Ограничиваем поправку                   
-                    dacV.setVoltage(constrain(baseDac + currentOffset, 0, 4095), false); // Отправляем новое значение в ЦАП
+                    currentOffset = constrain(currentOffset, -15, 15); // Ограничиваем поправку                    
+                    writeDacV_Raw(baseDac + currentOffset); // Задаем напряжение на ЦАП
 
                     stableCount = 0; // Сбрасываем счетчик попаданий                  
                     stableV = 0; // Сбрасываем счетчик стабильности измеренного напряжения
@@ -114,6 +114,15 @@ void printCalibrationTable() {
         Serial.print(F("\t\t"));
         Serial.println(conf.corrTable[i]); // Печатаем поправку из массива
     }    
+}
+
+// Вспомогательная функция для прямой записи в ЦАП напряжения
+void writeDacV_Raw(int val) {
+    val = constrain(val, 0, 4095);
+    Wire.beginTransmission(0x60); // Адрес ЦАП напряжения
+    Wire.write((val >> 8) & 0x0F);
+    Wire.write(val & 0xFF);
+    Wire.endTransmission();
 }
 
 // === АВТОКОРРЕКЦИЯ ЦАП ===
