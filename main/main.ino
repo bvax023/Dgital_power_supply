@@ -497,11 +497,10 @@ void handleOutputButton() {
 // Отключаем выход при достижении минимального тока при зарядке
 void checkChargeEnd() { 
   if (!isOutputEnable || !showAh || chargeDone || readI < 50) return;  // Выход выключен, не выбран режим счетчика Ампер-часов (showAh == true), зарядка помечена как оконченная, ток меньше 50мА
-
-  static uint32_t endTimer = 0;
     
     // setEndI в сотых долях (умножаем на 10 для перевода в мА)
-    if (readI < (setEndI * 10) && !isCCMode()) { // Блок не в режиме СС, текущий ток readI меньше установленного setEndI     
+    if (readI < (setEndI * 10) && !isCCMode()) { // Блок не в режиме СС, текущий ток readI меньше установленного setEndI      
+      static uint32_t endTimer = 0;
       if (endTimer == 0) endTimer = millis(); // Запускаем таймер      
       
       if (millis() - endTimer > 3000) { // Если условие выполняется 3 секунды 
@@ -513,7 +512,8 @@ void checkChargeEnd() {
         beep(1000); // Длинный сигнал об окончании зарядки 
         endTimer = 0;
       }
-    } else { // Если ток поднялся выше порога или БП ушел в CC режим - сбрасываем таймер        
+    } else { // Если ток поднялся выше порога или БП ушел в CC режим - сбрасываем таймер
+        static uint32_t endTimer = 0;
         endTimer = 0;
     }  
 }
