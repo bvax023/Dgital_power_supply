@@ -99,7 +99,7 @@ void enc_isr() {
 
 // ================= СТАРТ =================
 void setup() {
-  Serial.begin(115200);
+  //Serial.begin(115200);
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW); // Пищалка выключена по умолчанию 
   // --- Настройка кнопки и выхода ---
@@ -113,7 +113,7 @@ void setup() {
   lcd.init();       // Инициализация экрана
   lcd.backlight();  
   Wire.setClock(400000L);
-  Wire.setWireTimeout(3000, true); // Защита от зависания шины дисплея   
+  //Wire.setWireTimeout(3000, true); // Защита от зависания шины дисплея   
   
   enc.setType(TYPE2); // Тип энкодера (обычно TYPE2 для полушаговых)
 
@@ -500,13 +500,4 @@ void checkChargeEnd() {
         static uint32_t endTimer = 0;
         endTimer = 0;
     }  
-}
-
-// ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ВЫВОДА =================
-// Печать целых чисел со смещением для выравнивания
-void printInt(int val) {
-  lcd.setCursor(9, 1);
-  if (val >= 0) lcd.print(' ');
-  lcd.print(val);
-  lcd.print("  ");
 }

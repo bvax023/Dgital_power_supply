@@ -129,3 +129,12 @@ void printFormatted(uint32_t val, uint8_t inDec, uint8_t outDec) {
     lcd.print(frac);
   }
 }
+
+// ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ВЫВОДА =================
+// Печать целых чисел со смещением для выравнивания
+void printInt(int val) {
+  lcd.setCursor(9, 1);
+  if (val >= 0) lcd.print(' ');
+  lcd.print(val);
+  lcd.print("  ");
+}

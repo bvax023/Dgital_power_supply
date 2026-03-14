@@ -162,7 +162,7 @@ void corrDacV() {
     // Ошибка между заданным и измеренным в мВ
     int16_t error = (setV * 10) - readV;
 
-    if (abs(error) <= 5) {                             
+    if (abs(error) <= 4) {                             
         return;        
     } else {
         if (error > 0) autoCorrV++; // Напряжение ниже, добавляем шаг ЦАП
